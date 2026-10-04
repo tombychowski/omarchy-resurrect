@@ -20,6 +20,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # OpenSpec is a development/CI gate only; it is not an application
+      # dependency and is never installed by the Omarchy plugin.
+      - name: OpenSpec runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.5
+
+      - name: OpenSpec CLI
+        run: npm install --global @fission-ai/openspec@1.14.0
+
+      - name: OpenSpec
+        run: openspec validate --all --strict
+
       - name: What the suite needs
         run: |
           sudo apt-get update -qq

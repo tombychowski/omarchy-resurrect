@@ -1,0 +1,32 @@
+schema: spec-driven
+
+context: |
+  Use docs/index.md as the documentation authority map. Vision states intent,
+  main specs state observable behavior, contracts state exact external formats,
+  and testing docs state evidence and its limits.
+  The CLI is authoritative for machine state and mutation; panel changes must
+  preserve its role as a consumer rather than introduce a second truth.
+  Claims about current behavior require implementation plus automated evidence,
+  or an explicit real-machine/fresh-VM validation classification.
+
+rules:
+  proposal:
+    - Distinguish shipped behavior from direction or proposed behavior.
+    - Name affected specs, contracts, panel semantics, workflows, and tests.
+  design:
+    - Analyze changes that cross execution, persistence, confidentiality, network, or consumer trust boundaries.
+    - Reconcile affected documentation layers instead of duplicating their content.
+  specs:
+    - Do not weaken an existing safety or consent guarantee merely to match an implementation discrepancy; surface and resolve the discrepancy.
+  tasks:
+    - Include focused evidence for behavioral guarantees and identify any proof that remains real-machine or fresh-VM only.
+    - Include documentation reconciliation when a public behavior, format, protocol, or panel meaning changes.
+
+operations:
+  apply:
+    guidance:
+      - Treat current code as evidence to review, not automatic permission to narrow a specified guarantee.
+      - Mark a task complete only after its named verification has run or its manual-only boundary is recorded.
+  archive:
+    guidance:
+      - Confirm delta specs and affected contracts describe the same implemented behavior before archiving.

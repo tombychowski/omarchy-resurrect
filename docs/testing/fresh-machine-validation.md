@@ -1,8 +1,13 @@
-# Running the fresh-machine test
+# Fresh-machine validation
 
 `ress diff --stock` already gives a measured number without any of this. Do the
 full run when you want proof, and the recording: an actual fresh Omarchy
 becoming your machine, on the clock.
+
+This is the manual/VM layer of the [testing strategy](strategy.md). It verifies
+real package installation, absence on a genuinely clean machine, rendered panel
+behavior, service startup, visible theme application, and timing—claims the
+test doubles and static QML checks cannot prove.
 
 ## 1. Decide how the vault reaches the new machine
 

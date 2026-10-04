@@ -1,8 +1,9 @@
-# Testing ress
+# Testing strategy
 
-Four layers, in the order they catch things. The first three run on any machine
-in a minute or two. The fourth needs a VM, and there are exactly six things only
-it can tell you.
+Five layers, in the order they catch things. The suite, mutation runner, and
+static/model QML checks are automated. Scratch-directory integration needs a
+real Omarchy machine, and the final layer needs a clean Omarchy VM. There are
+exactly six things only that final layer can tell you.
 
 ## 1. The suite
 
@@ -10,6 +11,11 @@ it can tell you.
 ./tests/run.sh              # every case
 ./tests/run.sh aur          # just the ones whose name matches
 ```
+
+The baseline run for the documentation change on 2026-10-03 passed **21 cases
+and 575 assertions**. Treat those numbers as a recorded baseline, not a target
+to preserve by weakening or combining assertions; the current runner output is
+authoritative after tests change.
 
 Each case runs in a throwaway `$HOME` with test doubles on `PATH` for `pacman`,
 `yay`, `sudo`, `systemctl`, `curl`, `git` and the `omarchy` CLI. Nothing outside
@@ -114,7 +120,8 @@ aur.archlinux.org*.
 ## 5. What only a VM can tell you
 
 Everything above leaves six things unproven. All of them need a clean Omarchy
-install, which is what `DEMO.md` walks through.
+install, which [Fresh-machine validation](fresh-machine-validation.md) walks
+through.
 
 1. **Installing packages.** `sudo pacman -S` and `yay` building real PKGBUILDs
    have never run under test — the doubles record the call and stop. This is the

@@ -3,11 +3,11 @@
 <p align="center"><strong>Fresh Omarchy to <em>your</em> machine.</strong></p>
 
 <p align="center">
-  <a href="docs/preview.jpg"><img src="docs/preview.jpg" alt="The ress panel open on an Omarchy desktop, listing what a backup captures"></a>
+  <a href="docs/media/preview.jpg"><img src="docs/media/preview.jpg" alt="The ress panel open on an Omarchy desktop, listing what a backup captures"></a>
 </p>
 
 <p align="center">
-  <a href="docs/demo.gif"><img src="docs/demo.gif" width="420" alt="Backing up a machine and exporting a shareable loadout, in real time"></a>
+  <a href="docs/media/demo.gif"><img src="docs/media/demo.gif" width="420" alt="Backing up a machine and exporting a shareable loadout, in real time"></a>
   <br><em>A real backup: 166 packages, 27 config paths, 9 web apps — three seconds.</em>
 </p>
 
@@ -16,6 +16,9 @@ things back: the packages, the dotfiles, the theme, the web apps, the plugins,
 the twelve small decisions you have forgotten you ever made.
 
 ress is the other half of that minute.
+
+For the project vision, behavioral contracts, architecture, workflows, and
+verification evidence, see the **[documentation index](docs/index.md)**.
 
 ```bash
 ress backup                       # on the machine you like
@@ -160,8 +163,8 @@ ress apply ress.sh/gh/someone/their-loadout # become someone else's setup
 ```
 
 <p align="center">
-  <a href="docs/share.png"><img src="docs/share.png" width="49%" alt="The Share tab"></a>
-  <a href="docs/apply.png"><img src="docs/apply.png" width="49%" alt="The Apply tab"></a>
+  <a href="docs/media/share.png"><img src="docs/media/share.png" width="49%" alt="The Share tab"></a>
+  <a href="docs/media/apply.png"><img src="docs/media/apply.png" width="49%" alt="The Apply tab"></a>
 </p>
 
 `ress apply` shows you **everything** it would install — every package, every
@@ -199,7 +202,7 @@ Plain GitHub URLs work everywhere a short link does.
 
 ## The panel
 
-<p align="center"><a href="docs/panel.png"><img src="docs/panel.png" width="440" alt="The ress panel"></a></p>
+<p align="center"><a href="docs/media/panel.png"><img src="docs/media/panel.png" width="440" alt="The ress panel"></a></p>
 
 A bar icon that dims as your backup gets stale, and a panel that is entirely
 keyboard-driveable:
@@ -613,7 +616,7 @@ because it takes tens of minutes: it runs the whole suite once per mutation.
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
-[docs/TESTING.md](docs/TESTING.md) covers the whole strategy, including the
+[docs/testing/strategy.md](docs/testing/strategy.md) covers the whole strategy, including the
 real-tools checks worth running before a release and the six things only a
 clean VM can tell you.
 
