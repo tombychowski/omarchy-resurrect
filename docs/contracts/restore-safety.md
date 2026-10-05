@@ -91,6 +91,23 @@ A category is marked complete only when it finishes without a recorded failure a
 
 Declined AUR builds and other intentionally deferred category work are reported as “Left for later.” They are not failures, but they are not written as complete.
 
+## Explicit applied-loadout removal
+
+`ress loadout remove ID` is the narrow exception to additive apply and restore. It previews every claim as delete, release-only, retain, already-absent, protected, or decision-required and requires confirmation. A resource is automatically deleted only when all of these remain true at the final inspection:
+
+- ress observed it absent before the first claim and recorded cleanup authority;
+- the selected loadout owns the last claim;
+- current kind-specific evidence still matches the represented resource; and
+- no critical-resource or dependency safeguard refuses removal.
+
+Shared and pre-existing resources only lose the selected claim. Already missing resources are released without reinstallation. Changed or unverifiable resources are preserved until an explicit `--keep-modified` or `--remove-modified` decision; keeping relinquishes cleanup authority and leaves unmanaged machine state. Application data and unrelated configuration are never inferred from a resource claim.
+
+Package cleanup passes only validated direct targets to `pacman -R`. It does not request cascade, recursive dependency cleanup, `--nodeps`, or orphan deletion. Dependency refusal leaves the claim and loadout removal-pending. Any reported orphans are follow-up information only. Critical ress, privilege, package-management, and supported Omarchy runtime packages are protected even if registry provenance is forged.
+
+Plugin, web-app, and installed-theme cleanup is delegated to the corresponding Omarchy command after reinspection. If both IPC and the Omarchy shell process are absent, plugin removal reruns that same Omarchy remover with narrowly scoped no-live-shell responses for its enabled-state query and rescan; Omarchy still owns validation and deletion. An unresponsive live shell fails closed. A delegated nonzero status is accepted only when reinspection proves the intended resource is absent, since a later cache refresh can fail after successful deletion. Modified repositories, launchers, symlinks, mismatched remotes/commits, and ambiguous evidence fail closed. Active-theme intent is resolved before theme content: the newest remaining usable request wins, the baseline is restored after the final request, and an external theme selection is preserved.
+
+Removal records each released claim immediately. Failures remain `removal-pending`; rerunning resumes unresolved work. The loadout record disappears only after every claim/effect is terminal. An interrupted action with ambiguous post-crash evidence becomes `uncertain`, not owned or safely deleted.
+
 ## Failure semantics
 
 Validation and confirmation errors stop before the category loop. During replay, category-level failures are collected so independent later work can continue when safe. The final human report distinguishes:

@@ -17,6 +17,8 @@ const Model = {};
 new Function("exports", source + "\n" + [
   "CATEGORIES", "ago", "freshness", "stripCredentials",
   "plural", "summarize", "parseRecord", "consent",
+  "loadoutState", "resourceHealth", "parseLoadoutList", "parseLoadoutCheck", "mergeLoadoutViews",
+  "summarizeLoadoutContent", "loadoutContentNames",
 ].map((name) => `exports.${name} = typeof ${name} !== "undefined" ? ${name} : undefined;`)
   .join("\n"))(Model);
 
@@ -90,6 +92,35 @@ check("parse embedded pipes", Model.parseRecord("LOG|a|b|c").message, "a|b|c");
 check("parse prose", Model.parseRecord("Possible credentials in the vault"), null);
 check("parse empty", Model.parseRecord(""), null);
 check("parse null", Model.parseRecord(null), null);
+
+// ---- loadout lifecycle JSON ---------------------------------------------
+const loadout = { id: "work-a1b2", name: "Work", state: "healthy",
+  resourceCount: 3, attentionCount: 0 };
+check("parse loadout list", Model.parseLoadoutList({ loadouts: [loadout] }), [loadout]);
+check("parse empty loadout list", Model.parseLoadoutList({ loadouts: [] }), []);
+check("reject malformed loadout result", Model.parseLoadoutList({ loadouts: [{ id: "x" }] }), null);
+check("reject unknown loadout state", Model.parseLoadoutList({ loadouts: [{ ...loadout, state: "magic" }] }), null);
+const checked = { id: "work-a1b2", name: "Work", state: "drifted", attentionCount: 1,
+  resources: [{ id: "package:fd", currentState: "missing", healthState: "missing" }] };
+check("parse live loadout health", Model.parseLoadoutCheck({ healthy: false, loadouts: [checked] }), [checked]);
+check("reject malformed live resource", Model.parseLoadoutCheck({ healthy: false, loadouts: [
+  { ...checked, resources: [{ id: "package:fd", currentState: "magic" }] }
+] }), null);
+check("merge stored content with live health", Model.mergeLoadoutViews([loadout], [checked]), [{
+  ...loadout, state: "drifted", attentionCount: 1, resources: checked.resources
+}]);
+check("reject unmatched live health", Model.mergeLoadoutViews([loadout], []), null);
+check("loadout healthy label", Model.loadoutState("healthy"), "Healthy");
+check("loadout pending label", Model.loadoutState("pending"), "Pending work");
+check("loadout unknown label", Model.loadoutState("newer-state"), "Unavailable");
+check("missing resource needs attention", Model.resourceHealth("missing"), "attention");
+check("unverifiable resource is unknown", Model.resourceHealth("unverifiable"), "unknown");
+const profile = { packages: { native: ["fd"], aur: ["brave-bin"] },
+  plugins: [{ id: "acme.widget" }], webapps: [{ name: "Draw" }], theme: { name: "night" } };
+check("summarize loadout content", Model.summarizeLoadoutContent(profile),
+  "2 packages · 1 plugin · 1 web app · theme night");
+check("list loadout content names", Model.loadoutContentNames(profile),
+  "fd · brave-bin · acme.widget · Draw · night");
 
 // ---- the category table the panel renders --------------------------------
 check("categories count", Model.CATEGORIES.length, 6);

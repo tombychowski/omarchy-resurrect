@@ -149,6 +149,39 @@ Credential scanning returns:
 
 The matched secret is never present. Exit status is zero for no findings and non-zero when one or more findings exist.
 
+### Applied-loadout JSON
+
+`ress loadout list --json` emits one object with a `loadouts` array. Each item includes stable local `id`, display metadata, sanitized `source`, digest, timestamps, precedence, lifecycle `state`, `resourceCount`, and `attentionCount`. The stored normalized profile is omitted unless `--contents` is present.
+
+`ress loadout show ID --json` emits `{loadout, claims, resources}` for one local identity. `--contents` includes `loadout.profile`; otherwise executable-shaped remote references remain hidden from the ordinary inventory.
+
+`ress resource list --json` emits `{resources:[...]}` and accepts `--state STATE`. `ress resource show RESOURCE-ID --json` emits one resource with `firstObserved`, `cleanupPolicy`, recorded state/evidence, and `claimants`, the local loadout ids related through claims.
+
+`ress loadout check [ID] --json` performs live inspection and emits:
+
+```json
+{
+  "healthy": false,
+  "loadouts": [{
+    "id": "work-a1b2c3d4e5f6",
+    "attentionCount": 1,
+    "resources": [{
+      "id": "package:example",
+      "claimStatus": "healthy",
+      "healthState": "missing",
+      "currentState": "missing",
+      "currentEvidence": {}
+    }]
+  }]
+}
+```
+
+`healthState` is the consumer-facing classification. It reports protected resources explicitly and folds deferred or removal-pending claims into `pending`; `currentState` remains the direct machine observation. Its exit status is non-zero when any selected resource is not currently satisfied. Inspection does not repair or update the registry.
+
+`ress status --json` additionally contains `loadouts:{available,count,attention}`. A missing registry is an available empty inventory. A malformed or unsupported registry produces `available:false` and null counts without erasing valid backup status.
+
+Loadout mutations use the same porcelain record grammar as restore. A fully healthy apply ends with `DONE|ok|...`; deferred, failed, conflicting, or uncertain work ends with `DONE|partial|...` and a non-zero status. Consumers must not reinterpret warning prose as success.
+
 ## stderr and failures
 
 Consumers should collect stderr separately. Porcelain/JSON stdout must remain parseable, but an early `die` path can explain invalid usage, missing dependencies, unsafe input, or an unavailable vault through stderr and non-zero exit.
@@ -166,4 +199,4 @@ Within a supported schema generation:
 - consumers do not parse message prose to make safety decisions; and
 - behavior changes to required records, field meaning, or types require an OpenSpec and contract update with consumer tests.
 
-Protocol tests live in `tests/cases/12-porcelain.sh`, JSON behavior in `tests/cases/08-verify.sh` and `19-status-config.sh`, and parser behavior in `tests/model-test.js`.
+Protocol tests live in `tests/cases/12-porcelain.sh` and `28-tracked-apply.sh`; JSON behavior in `tests/cases/08-verify.sh`, `19-status-config.sh`, `27-loadout-query.sh`, and `29-loadout-check.sh`; parser behavior lives in `tests/model-test.js`.

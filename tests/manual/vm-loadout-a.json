@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "omarchy-loadout",
+  "name": "VM Lifecycle A",
+  "author": "ress validation",
+  "description": "Disposable clean-VM lifecycle profile A",
+  "createdAt": "2026-10-04T00:00:00Z",
+  "omarchy": "4.0.0.alpha",
+  "packages": {
+    "native": ["tree", "figlet"],
+    "aur": []
+  },
+  "plugins": [
+    {
+      "id": "tsouth89.resurrect",
+      "url": "https://github.com/btsouth/omarchy-resurrect",
+      "commit": "19a20b84bb66fc36020694d5957604a7f25e1e0e"
+    }
+  ],
+  "webapps": [
+    {
+      "name": "Ress VM A",
+      "url": "https://example.com/ress-vm-a",
+      "icon": "HEY"
+    }
+  ],
+  "theme": {
+    "name": "sunset-drive",
+    "url": "https://github.com/tahayvr/omarchy-sunset-drive-theme",
+    "commit": "1e6804ed91d531c23fb7487b65db81bb5818c485"
+  }
+}

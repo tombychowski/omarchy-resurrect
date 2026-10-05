@@ -10,7 +10,7 @@ The panel should not present a dashboard merely because more data is available. 
 
 ## The CLI is the authority
 
-The panel obtains durable state from `ress status --json` and operation state from the porcelain protocol. It invokes CLI commands for mutations. It does not inspect vault files, recreate validation rules, or infer success from animation or elapsed time.
+The panel obtains durable state from `ress status --json` and `ress loadout list --json --contents`, live resource health from `ress loadout check --json`, and operation state from the porcelain protocol. It invokes CLI commands for mutations. It does not inspect vault or registry files, recreate validation rules, or infer success from animation or elapsed time.
 
 If status cannot be parsed, the panel discards it. It must not fill missing vault facts from guesses. Process stderr, terminal records, and exit status determine operation errors.
 
@@ -30,7 +30,8 @@ Actions needing longer review or interaction move to a terminal:
 
 - restore, because it can write many files, install packages, need `sudo`, and ask separate consent questions;
 - loadout preview, because the exact package and integration list should have room to be read; and
-- loadout apply, because it confirms and can install software.
+- loadout apply, update, and repair, because they confirm and can install software; and
+- loadout removal, because it can delete exclusively owned resources and needs a complete retention/cleanup review.
 
 Opening a terminal is part of the trust model, not a fallback presentation failure. Privilege and prompts remain visible and answerable.
 
@@ -52,9 +53,9 @@ The panel never estimates completion from time. A stale successful backup remain
 
 ## Compact, keyboard-first interaction
 
-The same actions remain available to pointer and keyboard users. Cursor movement, tab switching, activation, direct `b`/`r`/`s`/`a` shortcuts, and closing are first-class paths. Focus entering the profile URL field must also have a keyboard path back to panel navigation.
+The same actions remain available to pointer and keyboard users. Cursor movement, tab switching, activation, direct `b`/`r`/`s`/`a`/`l` shortcuts, and closing are first-class paths. Focus entering the profile URL field must also have a keyboard path back to panel navigation.
 
-The panel should keep a predictable three-tab structure—Backup, Share, Apply—and preserve selection language across pointer and keyboard interaction.
+The panel keeps a predictable three-tab structure—Backup, Share, Loadouts—and preserves selection language across pointer and keyboard interaction. The Loadouts tab first gives count and attention, then rows, then selected metadata and corrective actions.
 
 ## Honest outcomes
 

@@ -2,6 +2,7 @@
 # Test double: the parts of the omarchy CLI that ress calls.
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 log_call "omarchy $*"
+S=$(state)
 
 case "${1:-} ${2:-}" in
   "plugin validate")
@@ -9,7 +10,15 @@ case "${1:-} ${2:-}" in
     exit 0
     ;;
   "plugin enable")  exit 0 ;;
-  "plugin remove")  exit 0 ;;
+  "plugin remove")
+    id="${4:-${3:-}}"; [[ $id == --yes ]] && id="${4:-}"
+    [[ -n $id ]] || exit 1
+    omarchy-shell shell listPlugins >/dev/null 2>&1 || exit 1
+    grep -qxF "$id" "$S/fail-plugin-remove.txt" 2>/dev/null && exit 1
+    rm -rf "$HOME/.config/omarchy/plugins/$id"
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || exit 1
+    exit 0
+    ;;
   "webapp install")
     name="${3:-}"; url="${4:-}"; icon="${5:-}"; custom="${6:-}"
     [[ -n $name && -n $url ]] || exit 1
@@ -33,11 +42,31 @@ Type=Application
 DESKTOP
     exit 0
     ;;
+  "webapp remove")
+    [[ ${3:-} != --yes ]] || exit 64
+    name="${3:-}"
+    [[ -n $name ]] || exit 1
+    grep -qxF "$name" "$S/fail-webapp-remove.txt" 2>/dev/null && exit 1
+    rm -f "$HOME/.local/share/applications/$name.desktop"
+    grep -qxF "$name" "$S/fail-after-webapp-remove.txt" 2>/dev/null && exit 1
+    exit 0
+    ;;
   "theme set")
     theme="${3:-}"
-    [[ -d $HOME/.config/omarchy/themes/$theme || -d /usr/share/omarchy/themes/$theme ]] || exit 1
+    [[ -d $HOME/.config/omarchy/themes/$theme || -d ${OMARCHY_PATH:-/usr/share/omarchy}/themes/$theme ]] || exit 1
     mkdir -p "$HOME/.local/state/omarchy/current"
     printf '%s\n' "$theme" >"$HOME/.local/state/omarchy/current/theme.name"
+    exit 0
+    ;;
+  "theme remove")
+    [[ ${3:-} != --yes ]] || exit 64
+    theme="${3:-}"
+    [[ -n $theme ]] || exit 1
+    grep -qxF "$theme" "$S/fail-theme-remove.txt" 2>/dev/null && exit 1
+    current=""
+    [[ -f $HOME/.local/state/omarchy/current/theme.name ]] && current=$(<"$HOME/.local/state/omarchy/current/theme.name")
+    [[ $current != "$theme" ]] || exit 1
+    rm -rf "$HOME/.config/omarchy/themes/$theme"
     exit 0
     ;;
 esac

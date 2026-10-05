@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "omarchy-loadout",
+  "name": "VM Lifecycle B",
+  "author": "ress validation",
+  "description": "Disposable clean-VM lifecycle profile B",
+  "createdAt": "2026-10-04T00:00:00Z",
+  "omarchy": "4.0.0.alpha",
+  "packages": {
+    "native": ["tree", "sl"],
+    "aur": []
+  },
+  "plugins": [
+    {
+      "id": "tsouth89.resurrect",
+      "url": "https://github.com/btsouth/omarchy-resurrect",
+      "commit": "19a20b84bb66fc36020694d5957604a7f25e1e0e"
+    }
+  ],
+  "webapps": [
+    {
+      "name": "Ress VM B",
+      "url": "https://example.com/ress-vm-b",
+      "icon": "HEY"
+    }
+  ],
+  "theme": {
+    "name": "hermarchy",
+    "url": "https://github.com/archer-clawbot/omarchy-hermarchy-theme",
+    "commit": "12f3c5257f87237fa3fd549cf7be3f9fba76f9c8"
+  }
+}

@@ -33,6 +33,19 @@ The default threshold is 48 hours and the manifest permits a panel setting from 
 | deferred | The user declined gated work or policy skipped it without making the whole command a failure | CLI: `Left for later`; keep it distinct from both failure and completion |
 | resumable | Completed categories are checkpointed and unfinished/failed/deferred work remains for the same snapshot | CLI: `Rerun the same command to pick up where it stopped` or a focused follow-up such as `ress restore --only packages --aur` |
 
+## Applied-loadout health
+
+| State | Panel language | Meaning |
+|---|---|---|
+| `healthy` | `Healthy` | All recorded claims are satisfied; live confirmation still comes from check |
+| `pending` | `Pending work` | Installation or consent remains incomplete |
+| `drifted` | `Needs repair` | A check found desired state missing or changed |
+| `conflicting` | `Conflict` | The same logical identity has incompatible represented content |
+| `removal-pending` | `Removal pending` | Some claim cleanup or explicit decision remains |
+| unknown/malformed | `Unavailable` | The consumer cannot safely interpret the state |
+
+The Loadouts summary merges stored inventory with a live, read-only check and names how many are tracked and how many currently need attention. A malformed or unmatched result is **unavailable**, never zero. Resource detail uses missing/pending as attention, modified/conflicting/failed as warning, protected/present as healthy, and unverifiable/uncertain as unknown. Check and repair remain distinct: panel refresh never mutates the machine.
+
 ## Protocol mapping
 
 The panel consumes the following porcelain states:
@@ -51,6 +64,8 @@ The panel consumes the following porcelain states:
 ## Status unavailability
 
 If `ress status --json` cannot be parsed, `Service.qml` sets its accepted status object to `null`. Status-dependent summaries are withheld. The panel does not inspect the vault to fill the gap and does not show zero counts as though they came from the CLI.
+
+The same rule applies independently to loadout-list JSON. A valid backup status can coexist with unavailable loadout state and vice versa.
 
 This is a refusal to fabricate state, not a claim that the vault is empty. Operation stderr and exit failures continue to use the failure language above.
 

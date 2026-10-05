@@ -121,6 +121,12 @@ A theme name without a cloneable repository can still select a bundled or alread
 
 ## Additive behavior
 
-Apply compares packages and integrations with the current machine and operates only on missing entries. It has no package-removal action and no representation for deleting user files. Failed plugin clones are cleaned from their intended plugin target, but unrelated installed plugins and themes remain untouched.
+Apply normalizes the supported fields, computes a canonical digest, compares every represented resource with current machine and registry state, and operates only on eligible missing entries. Unknown fields and object ordering do not create a different local identity. Invalid supported entries are reported and omitted.
 
-See [Share and apply](../workflows/share-apply.md) for the user journey and [Restore safety](restore-safety.md) for the shared consent principles.
+A confirmed apply stores the normalized version-1 profile as machine-local desired state, including an all-present no-op profile. This does not change the public schema: registry identity, provenance, outcomes, and cleanup policy are local facts and are never written into `profile.json`.
+
+An exact digest reapplication reconciles the existing local loadout. If a known sanitized source now returns different normalized content, ordinary apply refuses silent replacement. The user runs `ress loadout update ID [SOURCE]` to preview retained, added, conflicting, and withdrawn claims. Update routes withdrawals through the same preservation planner as removal.
+
+Apply itself remains additive. It has no package-removal action and no representation for deleting user files. Failed plugin clones are cleaned from their intended plugin target, but unrelated installed plugins and themes remain untouched. Deletion is available only through the separately previewed, confirmed `ress loadout remove ID` workflow described in [Restore safety](restore-safety.md).
+
+See [Applied-loadout registry](loadout-registry.md) for local state and [Share and apply](../workflows/share-apply.md) for the lifecycle.

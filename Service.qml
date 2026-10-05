@@ -39,6 +39,11 @@ Item {
   property int now: Math.floor(Date.now() / 1000)
   property var status: null
   property bool loadingStatus: false
+  property var loadouts: null
+  property var loadoutInventory: null
+  property var loadoutHealth: null
+  property bool loadoutsAvailable: false
+  property bool loadingLoadouts: false
 
   property bool busy: false
   readonly property bool anyBusy: busy || externallyBusy
@@ -175,7 +180,48 @@ Item {
 
   function backupNow()  { return run(["backup"], "backup") }
   function shareNow()   { return run(["share"], "share") }
-  function refresh()    { if (!statusProc.running) { loadingStatus = true; statusProc.running = true } }
+  function refresh() {
+    if (!statusProc.running) { loadingStatus = true; statusProc.running = true }
+    refreshLoadouts()
+  }
+
+  function refreshLoadouts() {
+    if (loadoutProc.running || loadoutCheckProc.running) return
+    loadingLoadouts = true
+    loadoutInventory = null
+    loadoutHealth = null
+    loadoutProc.running = true
+    loadoutCheckProc.running = true
+  }
+
+  function publishLoadouts() {
+    if (loadoutInventory === null || loadoutHealth === null) return
+    var merged = Model.mergeLoadoutViews(loadoutInventory, loadoutHealth)
+    loadouts = merged
+    loadoutsAvailable = merged !== null
+    loadingLoadouts = false
+  }
+
+  function rejectLoadouts() {
+    loadouts = null
+    loadoutsAvailable = false
+    loadingLoadouts = false
+  }
+
+  function applyTerminalArgs(source, dryRun) {
+    return ["omarchy-launch-terminal", cli, "apply"].concat(dryRun ? ["--dry-run"] : []).concat(["--", source])
+  }
+
+  function loadoutTerminalArgs(action, id, source) {
+    var args = ["omarchy-launch-terminal", cli, "loadout", action, id]
+    if (action === "update" && source) args = args.concat(["--", source])
+    return args
+  }
+
+  function openApply(source, dryRun) { Quickshell.execDetached(applyTerminalArgs(source, dryRun)) }
+  function openLoadoutAction(action, id, source) {
+    Quickshell.execDetached(loadoutTerminalArgs(action, id, source || ""))
+  }
 
   // execDetached rather than a shared Process: assigning `command` to a Process
   // that is still running drops the write, so a second quick toggle vanished.
@@ -229,6 +275,46 @@ Item {
       if (exitCode !== 0 && !root.lastError) root.lastError = "exited with code " + exitCode
       root.finished(root.busyAction, root.lastResult || (exitCode === 0 ? "ok" : "fail"))
       root.refresh()
+    }
+  }
+
+  Process {
+    id: loadoutProc
+    running: false
+    command: [root.cli, "loadout", "list", "--json", "--contents"]
+    stdout: StdioCollector {
+      id: loadoutOut
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var parsed = Model.parseLoadoutList(JSON.parse(text || "{}"))
+          if (parsed === null) root.rejectLoadouts()
+          else { root.loadoutInventory = parsed; root.publishLoadouts() }
+        } catch (e) {
+          root.rejectLoadouts()
+        }
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) root.rejectLoadouts()
+    }
+  }
+
+  Process {
+    id: loadoutCheckProc
+    running: false
+    command: [root.cli, "loadout", "check", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var parsed = Model.parseLoadoutCheck(JSON.parse(text || "{}"))
+          if (parsed === null) root.rejectLoadouts()
+          else { root.loadoutHealth = parsed; root.publishLoadouts() }
+        } catch (e) {
+          root.rejectLoadouts()
+        }
+      }
     }
   }
 

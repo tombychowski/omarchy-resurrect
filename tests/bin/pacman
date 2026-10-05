@@ -15,9 +15,14 @@ case "${1:-}" in
   -Qqen) grep -v '^$' "$S/native.txt" 2>/dev/null | sort -u; exit 0 ;;
   -Qqem) grep -v '^$' "$S/foreign.txt" 2>/dev/null | sort -u; exit 0 ;;
   -Qqe)  installed_all; exit 0 ;;
+  -Qtdq) grep -v '^$' "$S/orphaned.txt" 2>/dev/null | sort -u; exit 0 ;;
   -Q)
     [[ -n ${2:-} ]] || { installed_all; exit 0; }
-    is_installed "$2" && { printf '%s 1.0-1\n' "$2"; exit 0; }
+    if is_installed "$2"; then
+      version=$(awk -F '\t' -v pkg="$2" '$1 == pkg { print $2; exit }' "$S/package-versions.tsv" 2>/dev/null || true)
+      printf '%s %s\n' "$2" "${version:-1.0-1}"
+      exit 0
+    fi
     printf 'error: package "%s" was not found\n' "$2" >&2
     exit 1
     ;;
@@ -57,6 +62,26 @@ case "${1:-}" in
     printf '%s\n' "${wanted[@]}" >>"$S/native.txt"
     sort -u -o "$S/native.txt" "$S/native.txt"
     printf 'installed %s\n' "${wanted[*]}"
+    exit 0
+    ;;
+  -R)
+    mapfile -t wanted < <(args_after_dashdash "$@")
+    if (( ${#wanted[@]} == 0 )); then
+      for arg in "$@"; do [[ $arg == -* ]] && continue; wanted+=("$arg"); done
+    fi
+    for pkg in "${wanted[@]}"; do
+      if grep -qxF "$pkg" "$S/remove-required.txt" 2>/dev/null; then
+        printf 'error: failed to prepare transaction (could not satisfy dependencies)\n' >&2
+        exit 1
+      fi
+    done
+    for pkg in "${wanted[@]}"; do
+      grep -vxF "$pkg" "$S/native.txt" >"$S/native.next" 2>/dev/null || true
+      mv "$S/native.next" "$S/native.txt"
+      grep -vxF "$pkg" "$S/foreign.txt" >"$S/foreign.next" 2>/dev/null || true
+      mv "$S/foreign.next" "$S/foreign.txt"
+    done
+    printf 'removed %s\n' "${wanted[*]}"
     exit 0
     ;;
 esac

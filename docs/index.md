@@ -16,6 +16,7 @@ For installation and the most common commands, start with the [README](../README
 
 - [Vault format](contracts/vault-format.md) — the private Git vault, manifest, payloads, and compatibility.
 - [Loadout profile](contracts/loadout-profile.md) — the constrained shareable `profile.json` format.
+- [Applied-loadout registry](contracts/loadout-registry.md) — local desired state, provenance, claims, journaling, and cleanup authority.
 - [Restore safety](contracts/restore-safety.md) — preview, consent, resumability, and preservation rules.
 - [CLI protocol](contracts/cli-protocol.md) — JSON and porcelain surfaces for automation and the panel.
 

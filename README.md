@@ -160,11 +160,12 @@ repos, web app URLs, a theme name. That is the entire format.
 ```bash
 ress share                                  # writes profile.json, prints your link
 ress apply ress.sh/gh/someone/their-loadout # become someone else's setup
+ress loadout list                           # see desired state on this machine
 ```
 
 <p align="center">
   <a href="docs/media/share.png"><img src="docs/media/share.png" width="49%" alt="The Share tab"></a>
-  <a href="docs/media/apply.png"><img src="docs/media/apply.png" width="49%" alt="The Apply tab"></a>
+  <a href="docs/media/loadouts.png"><img src="docs/media/loadouts.png" width="40%" alt="The Loadouts tab showing two healthy applied loadouts"></a>
 </p>
 
 `ress apply` shows you **everything** it would install — every package, every
@@ -198,6 +199,14 @@ nothing else — no account, no upload, no copy of your profile. It is expanded
 talks to ress.sh and a short link works whether or not the shortener is up.
 Plain GitHub URLs work everywhere a short link does.
 
+Confirmed loadouts stay tracked. Compatible resources can be shared across
+multiple loadouts, while ress remembers whether each resource already existed
+or was introduced by ress. `ress loadout check` reports external drift;
+`ress loadout repair` explicitly reinstalls eligible missing resources.
+`ress loadout remove` is the inverse of apply: it previews every cleanup,
+retains shared, pre-existing, changed, and protected state by default, and
+removes only unchanged resources introduced by ress for the final claim.
+
 ---
 
 ## The panel
@@ -211,7 +220,7 @@ keyboard-driveable:
 |---|---|
 | `b` | back up now |
 | `r` | restore (opens a terminal — see below) |
-| `s` / `a` | jump to Share / Apply |
+| `s` / `a` | jump to Share / Loadouts |
 | `j` `k` / `↑` `↓` | move |
 | `h` `l` / `←` `→` | switch tab |
 | `Enter` / `Space` | activate |
@@ -239,6 +248,9 @@ ress restore [--from URL] [--only LIST]     replay a vault, resumably
               [--enable-units|--no-enable-units]
 ress share [--name NAME] [--description T]  export a shareable loadout
 ress apply <link> [--dry-run]               install someone else's loadout
+ress loadout <list|show|check|repair|update|remove>
+                                            inspect and manage applied loadouts
+ress resource <list|show>                   inspect resource provenance/claimants
 ress verify [--json]                        check this machine against the vault
 ress scan [--json]                          look for credentials in the vault
 ress enable-units [--all|--list] [UNIT...]  turn on the services a backup recorded
@@ -439,7 +451,7 @@ ress touches your package manager, so here is exactly how and why.
 no install hooks, no post-install scripts, no `sudo`. The manifest declares
 `bar-widget` and `service`; neither runs a package command on its own.
 
-**`pacman` only ever *installs* two ways**, both after you have seen the list
+**`pacman` installs only two ways**, both after you have seen the list
 (it is also queried read-only in several places, which changes nothing):
 
 - `ress restore` — replays *your own* vault, and only installs what is missing.
@@ -448,8 +460,11 @@ no install hooks, no post-install scripts, no `sudo`. The manifest declares
 - `ress apply` — installs from someone else's loadout, after a full preview and
   an explicit confirmation.
 
-Neither ever removes a package, and only one process can touch a vault at a
-time. Restore keeps every file it replaces as `*.ress-bak` — including the
+Neither restore nor apply removes a package. The separate, explicit
+`ress loadout remove` command may pass an unchanged, final-claim package that
+ress introduced directly to `pacman -R`; it never cascades, ignores
+dependencies, or removes orphans, and critical runtime packages are protected.
+Only one ress mutation runs at a time. Restore keeps every file it replaces as `*.ress-bak` — including the
 bar layout, web app launchers and anything restored from the encrypted secrets
 bundle.
 
@@ -562,7 +577,10 @@ entry refused, `$HOME` unchanged, nothing installed, nothing executed.
 
 **Apply only knows four verbs**: install a package, add a plugin, add a web app,
 set a theme. There is no fifth, and no field of a profile is ever run as a
-command.
+command. Explicit loadout removal is a different, registry-backed workflow:
+it reconstructs validated targets, checks provenance, other claims, current
+evidence, and protection rules, then delegates eligible cleanup to pacman or
+Omarchy after a complete preview and confirmation.
 
 ## How this differs from what Omarchy already has
 

@@ -56,6 +56,7 @@ PORCELAIN=0
 DRY_RUN=0
 ASSUME_YES=0
 ALLOW_UNPINNED=0
+LOADOUT_LOCKED=0
 # Set by --aur / --no-aur / --review-aur; empty leaves the decision to the AUR
 # setting, which defaults to asking.
 AUR_CHOICE=""
@@ -237,7 +238,10 @@ take_lock() {
   # bar reads as "busy" is not written, because nothing is happening to this
   # machine.
   (( DRY_RUN )) || date -u +%s >"$STATE_DIR/running"
+  LOADOUT_LOCKED=1
 }
+
+ensure_loadout_lock() { (( LOADOUT_LOCKED )) || take_lock; }
 
 # "1 plugins" reads like a bug even when the number is right.
 plural() {
@@ -306,6 +310,9 @@ build_excludes() {
   private_dir "$STATE_DIR"
   local out="$STATE_DIR/exclude.rsync"
   merged_list exclude >"$out"
+  # Machine-local ownership/provenance must never travel through a vault, even
+  # when a user adds a broad ~/.local path to the capture include list.
+  printf '%s\n' '.local/state/ress/' >>"$out"
   printf '%s\n' "$out"
 }
 
@@ -450,8 +457,7 @@ capture_omarchy() {
   done
 
   # Which theme is on, and which of its backgrounds.
-  [[ -f $HOME/.local/state/omarchy/current/theme.name ]] &&
-    cp "$HOME/.local/state/omarchy/current/theme.name" "$out/theme.name"
+  active_theme_name >"$out/theme.name" || rm -f "$out/theme.name"
   local bg
   bg=$(readlink "$HOME/.local/state/omarchy/current/background" 2>/dev/null || true)
   [[ -n $bg ]] && basename "$bg" >"$out/background.name"
@@ -1423,8 +1429,7 @@ preview_omarchy() {
   if [[ -f $dir/theme.name ]]; then
     local want current=""
     want=$(<"$dir/theme.name"); want="${want//[[:space:]]/}"
-    [[ -f $HOME/.local/state/omarchy/current/theme.name ]] &&
-      { current=$(<"$HOME/.local/state/omarchy/current/theme.name"); current="${current//[[:space:]]/}"; }
+    current=$(active_theme_name || true)
     if ! valid_theme "$want"; then
       printf '    %-12s %sunsafe theme name — refused%s\n' "active theme" "$c_yellow" "$c_reset"
     elif [[ $want == "$current" ]]; then
@@ -2093,6 +2098,16 @@ cmd_status() {
     ahead=$(json_number "$(git_vault rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)")
   fi
 
+  local loadout_summary
+  if [[ ! -f $LOADOUT_REGISTRY ]]; then
+    loadout_summary='{"available":true,"count":0,"attention":0}'
+  elif registry_validate "$LOADOUT_REGISTRY"; then
+    loadout_summary=$(jq -c '{available:true,count:(.loadouts|length),
+      attention:([.loadouts[] | select(.state != "healthy")]|length)}' "$LOADOUT_REGISTRY")
+  else
+    loadout_summary='{"available":false,"count":null,"attention":null}'
+  fi
+
   if (( as_json )); then
     jq -n \
       --argjson hasVault "$has_vault" \
@@ -2118,6 +2133,7 @@ cmd_status() {
         --argjson captureAutostart "$(json_flag "${CFG[CAPTURE_AUTOSTART]:-0}")" \
         '$ARGS.named')" \
       --argjson manifest "$(manifest_json)" \
+      --argjson loadouts "$loadout_summary" \
       '$ARGS.named'
     return 0
   fi
@@ -2137,6 +2153,13 @@ cmd_status() {
       "$(manifest_path)"
   else
     printf '  %sno backup yet — run: ress backup%s\n' "$c_dim" "$c_reset"
+  fi
+
+  if [[ $(jq -r '.available' <<<"$loadout_summary") == true ]]; then
+    printf '  loadouts   %s tracked, %s need attention\n' \
+      "$(jq -r '.count' <<<"$loadout_summary")" "$(jq -r '.attention' <<<"$loadout_summary")"
+  else
+    printf '  loadouts   %sunavailable (registry needs attention)%s\n' "$c_yellow" "$c_reset"
   fi
   printf '\n  categories '
   local category key
@@ -2816,6 +2839,257 @@ PROFILE_SCHEMA=1
 PROFILE_DIR_DEFAULT="${XDG_DATA_HOME:-$HOME/.local/share}/ress/profile"
 APPLY_WORK=""
 
+# A loadout is public input; applied-loadout ownership is private machine state.
+# Keep the two schemas separate so a portable profile can remain compatible
+# without pretending provenance from one machine is valid on another.
+LOADOUT_REGISTRY_SCHEMA=1
+LOADOUT_REGISTRY="$STATE_DIR/loadouts.json"
+REGISTRY=""
+REGISTRY_REVISION=0
+
+registry_empty() {
+  jq -nc '{schemaVersion: 1, revision: 0,
+    baseline: {activeTheme: null}, loadouts: [], resources: [], claims: [], operation: null}'
+}
+
+registry_definition_valid() {
+  local kind="$1" name="$2" definition="$3" id url commit icon
+  case "$kind" in
+    package)
+      jq -e --arg name "$name" 'type == "object" and keys == ["name"] and .name == $name' \
+        <<<"$definition" >/dev/null
+      ;;
+    plugin)
+      jq -e --arg name "$name" 'type == "object" and keys == ["commit","id","url"] and .id == $name and
+        (.url | type == "string") and (.commit | type == "string")' <<<"$definition" >/dev/null || return 1
+      id=$(jq -r '.id' <<<"$definition"); url=$(jq -r '.url' <<<"$definition"); commit=$(jq -r '.commit' <<<"$definition")
+      valid_id "$id" && valid_https "$url" && [[ $(canonical_remote "$url") == "$url" ]] &&
+        { [[ -z $commit ]] || valid_sha "$commit"; }
+      ;;
+    webapp)
+      jq -e --arg name "$name" 'type == "object" and keys == ["icon","name","url"] and .name == $name and
+        (.url | type == "string") and (.icon | type == "string")' <<<"$definition" >/dev/null || return 1
+      url=$(jq -r '.url' <<<"$definition"); icon=$(jq -r '.icon' <<<"$definition")
+      valid_https "$url" && { [[ -z $icon ]] || valid_icon "$icon"; }
+      ;;
+    theme-install)
+      jq -e --arg name "$name" 'type == "object" and keys == ["commit","name","url"] and .name == $name and
+        (.url | type == "string") and (.commit | type == "string")' <<<"$definition" >/dev/null || return 1
+      url=$(jq -r '.url' <<<"$definition"); commit=$(jq -r '.commit' <<<"$definition")
+      { [[ -z $url ]] || { valid_https "$url" && [[ $(canonical_remote "$url") == "$url" ]]; }; } &&
+        { [[ -z $commit ]] || valid_sha "$commit"; }
+      ;;
+    theme-active)
+      jq -e --arg name "$name" 'type == "object" and keys == ["name"] and .name == $name' \
+        <<<"$definition" >/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+registry_claim_request_valid() {
+  local kind="$1" name="$2" requested="$3"
+  if [[ $kind == package ]]; then
+    jq -e --arg name "$name" '
+      type == "object" and keys == ["channels","name"] and .name == $name and
+      (.channels | type == "array" and length > 0 and length == (unique | length) and
+       all(.[]; . == "native" or . == "aur"))
+    ' <<<"$requested" >/dev/null
+  else
+    registry_definition_valid "$kind" "$name" "$requested"
+  fi
+}
+
+registry_profile_valid() {
+  local profile="$1" value id url commit icon
+  jq -e '
+    type == "object" and
+    keys == ["author","createdAt","description","kind","name","omarchy","packages","plugins","schemaVersion","theme","webapps"] and
+    .schemaVersion == 1 and .kind == "omarchy-loadout" and
+    (.name | type == "string") and (.author | type == "string") and
+    (.description | type == "string") and (.createdAt | type == "string") and (.omarchy | type == "string") and
+    (.packages | type == "object" and keys == ["aur","native"] and
+      (.native | type == "array") and (.aur | type == "array")) and
+    (.plugins | type == "array") and (.webapps | type == "array") and
+    (.theme | type == "object" and keys == ["commit","name","url"])
+  ' <<<"$profile" >/dev/null || return 1
+
+  while IFS= read -r value; do valid_pkg "$value" || return 1; done \
+    < <(jq -r '.packages.native[], .packages.aur[]' <<<"$profile")
+  jq -e '(.packages.native | length == (unique | length)) and
+    (.packages.aur | length == (unique | length))' <<<"$profile" >/dev/null || return 1
+  while IFS=$'\t' read -r id url commit; do
+    valid_id "$id" && valid_https "$url" && [[ $(canonical_remote "$url") == "$url" ]] &&
+      { [[ -z $commit ]] || valid_sha "$commit"; } || return 1
+  done < <(jq -r '.plugins[] | [.id,.url,.commit] | @tsv' <<<"$profile")
+  jq -e '([.plugins[].id] | length) == ([.plugins[].id] | unique | length)' <<<"$profile" >/dev/null || return 1
+  while IFS=$'\t' read -r value url icon; do
+    valid_label "$value" && valid_https "$url" && { [[ -z $icon ]] || valid_icon "$icon"; } || return 1
+  done < <(jq -r '.webapps[] | [.name,.url,.icon] | @tsv' <<<"$profile")
+  jq -e '([.webapps[].name] | length) == ([.webapps[].name] | unique | length)' <<<"$profile" >/dev/null || return 1
+  value=$(jq -r '.theme.name' <<<"$profile"); url=$(jq -r '.theme.url' <<<"$profile"); commit=$(jq -r '.theme.commit' <<<"$profile")
+  if [[ -n $value ]]; then
+    valid_theme "$value" || return 1
+    { [[ -z $url ]] || { valid_https "$url" && [[ $(canonical_remote "$url") == "$url" ]]; }; } || return 1
+    { [[ -z $commit ]] || valid_sha "$commit"; } || return 1
+  else
+    [[ -z $url && -z $commit ]] || return 1
+  fi
+}
+
+# The registry can authorize deletion, so it is validated more strictly than a
+# display cache. It stores logical ids, never paths or command fragments.
+registry_validate() {
+  local file="$1"
+  jq -e '
+    def integer: type == "number" and floor == .;
+    def localid: type == "string" and test("^[a-z0-9][a-z0-9-]{0,80}$");
+    def cleanup: . == "retain" or . == "remove" or . == "unknown";
+    def observed: . == "present" or . == "absent" or . == "unknown";
+    def rstate: . == "present" or . == "missing" or . == "modified" or
+      . == "conflicting" or . == "protected" or . == "pending" or
+      . == "failed" or . == "uncertain" or . == "unverifiable";
+    def cstate: . == "healthy" or . == "pending" or . == "deferred" or
+      . == "conflicting" or . == "failed" or . == "uncertain" or
+      . == "removal-pending";
+    def lstate: . == "healthy" or . == "pending" or . == "drifted" or
+      . == "conflicting" or . == "removal-pending" or . == "unavailable";
+    def actionstate: . == "planned" or . == "running" or . == "done" or
+      . == "failed" or . == "uncertain" or . == "skipped";
+    type == "object" and
+    (.schemaVersion == 1) and (.revision | integer and . >= 0) and
+    (.baseline | type == "object") and
+    (.baseline.activeTheme == null or (.baseline.activeTheme | type == "string")) and
+    (.loadouts | type == "array") and (.resources | type == "array") and
+    (.claims | type == "array") and
+    (all(.loadouts[];
+      (.id | localid) and (.name | type == "string") and
+      (.source | type == "string") and (.digest | type == "string" and test("^[0-9a-f]{64}$")) and
+      (.profile | type == "object") and (.state | lstate) and
+      (.appliedAt | integer and . >= 0) and (.updatedAt | integer and . >= 0) and
+      (.precedence | integer and . >= 0))) and
+    (([.loadouts[].id] | length) == ([.loadouts[].id] | unique | length)) and
+    (all(.resources[];
+      (.id | type == "string" and test("^(package|plugin|webapp|theme-install|theme-active):")) and
+      (.kind == "package" or .kind == "plugin" or .kind == "webapp" or
+       .kind == "theme-install" or .kind == "theme-active") and
+      (.name | type == "string") and (.definition | type == "object") and
+      (.firstObserved | observed) and (.cleanupPolicy | cleanup) and
+      (.state | rstate) and (.evidence | type == "object"))) and
+    (([.resources[].id] | length) == ([.resources[].id] | unique | length)) and
+    (all(.claims[];
+      (.loadoutId | localid) and (.resourceId | type == "string") and
+      (.requested | type == "object") and (.status | cstate) and
+      (.lastError | type == "string"))) and
+    (([.claims[] | [.loadoutId, .resourceId] | join("\u001f")] | length) ==
+     ([.claims[] | [.loadoutId, .resourceId] | join("\u001f")] | unique | length)) and
+    (.operation == null or
+      ((.operation | type == "object") and
+       (.operation.kind == "apply" or .operation.kind == "update" or
+        .operation.kind == "repair" or .operation.kind == "remove") and
+       (.operation.target | localid) and
+       (.operation.phase == "planned" or .operation.phase == "running") and
+       (.operation.actions | type == "array") and
+       all(.operation.actions[];
+         (.resourceId | type == "string") and (.state | actionstate))))
+  ' "$file" >/dev/null 2>&1 || return 1
+
+  local kind name id row definition requested resource source profile loadout_id
+  while IFS= read -r row; do
+    kind=$(jq -r '.kind' <<<"$row"); name=$(jq -r '.name' <<<"$row"); id=$(jq -r '.id' <<<"$row")
+    case "$kind" in
+      package) valid_pkg "$name" && [[ $id == "package:$name" ]] || return 1 ;;
+      plugin) valid_id "$name" && [[ $id == "plugin:$name" ]] || return 1 ;;
+      webapp) valid_label "$name" && [[ $id == "webapp:$name" ]] || return 1 ;;
+      theme-install) valid_theme "$name" && [[ $id == "theme-install:$name" ]] || return 1 ;;
+      theme-active)
+        valid_theme "$name" || return 1
+        [[ ${id#theme-active:} =~ ^[a-z0-9][a-z0-9-]{0,80}$ ]] || return 1
+        ;;
+      *) return 1 ;;
+    esac
+    definition=$(jq -c '.definition' <<<"$row")
+    registry_definition_valid "$kind" "$name" "$definition" || return 1
+  done < <(jq -c '.resources[]' "$file")
+
+  while IFS= read -r row; do
+    id=$(jq -r '.resourceId' <<<"$row")
+    resource=$(jq -c --arg id "$id" '.resources[] | select(.id == $id)' "$file")
+    [[ -n $resource ]] || return 1
+    loadout_id=$(jq -r '.loadoutId' <<<"$row")
+    jq -e --arg id "$loadout_id" 'any(.loadouts[]; .id == $id)' "$file" >/dev/null || return 1
+    kind=$(jq -r '.kind' <<<"$resource"); name=$(jq -r '.name' <<<"$resource")
+    requested=$(jq -c '.requested' <<<"$row")
+    registry_claim_request_valid "$kind" "$name" "$requested" || return 1
+  done < <(jq -c '.claims[]' "$file")
+
+  while IFS= read -r row; do
+    source=$(jq -r '.source' <<<"$row")
+    [[ $source != *"://"* || $(strip_credentials "$source") == "$source" ]] || return 1
+    profile=$(jq -c '.profile' <<<"$row")
+    registry_profile_valid "$profile" || return 1
+  done < <(jq -c '.loadouts[]' "$file")
+}
+
+registry_load() {
+  local allow_missing="${1:-0}"
+  if [[ ! -f $LOADOUT_REGISTRY ]]; then
+    REGISTRY=$(registry_empty)
+    REGISTRY_REVISION=0
+    return 0
+  fi
+  if ! registry_validate "$LOADOUT_REGISTRY"; then
+    (( allow_missing )) && return 1
+    die "the applied-loadout registry is malformed or unsupported — refusing to mutate it"
+  fi
+  REGISTRY=$(<"$LOADOUT_REGISTRY")
+  REGISTRY_REVISION=$(jq -r '.revision' <<<"$REGISTRY")
+}
+
+registry_save() {
+  local next="$1" current_revision=0 tmp
+  private_dir "$STATE_DIR"
+  if [[ -f $LOADOUT_REGISTRY ]]; then
+    registry_validate "$LOADOUT_REGISTRY" || die "the applied-loadout registry changed into an invalid state"
+    current_revision=$(jq -r '.revision' "$LOADOUT_REGISTRY")
+  fi
+  (( current_revision == REGISTRY_REVISION )) ||
+    die "the applied-loadout registry changed while this operation was planning; retry"
+  next=$(jq -c --argjson revision "$((REGISTRY_REVISION + 1))" '.revision = $revision' <<<"$next")
+  tmp=$(mktemp "$STATE_DIR/.loadouts.XXXXXX")
+  printf '%s\n' "$next" >"$tmp"
+  chmod 600 "$tmp"
+  if ! registry_validate "$tmp"; then
+    rm -f "$tmp"
+    die "internal error: refusing to write an invalid applied-loadout registry"
+  fi
+  mv -f "$tmp" "$LOADOUT_REGISTRY"
+  REGISTRY="$next"
+  REGISTRY_REVISION=$((REGISTRY_REVISION + 1))
+}
+
+registry_begin_operation() {
+  local kind="$1" target="$2" actions="${3:-[]}" next
+  next=$(jq -c --arg kind "$kind" --arg target "$target" --argjson actions "$actions" \
+    '.operation = {kind: $kind, target: $target, phase: "planned", actions: $actions}' <<<"$REGISTRY")
+  registry_save "$next"
+}
+
+registry_action_state() {
+  local resource="$1" state="$2" next
+  next=$(jq -c --arg id "$resource" --arg state "$state" '
+    .operation.phase = "running" |
+    .operation.actions |= map(if .resourceId == $id then .state = $state else . end)
+  ' <<<"$REGISTRY")
+  registry_save "$next"
+}
+
+registry_finish_operation() {
+  local next
+  next=$(jq -c '.operation = null' <<<"$REGISTRY")
+  registry_save "$next"
+}
+
 # ---------------------------------------------------- untrusted vault input
 #
 # A vault is not necessarily yours. `restore --from <git-url>` fetches one over
@@ -2835,6 +3109,21 @@ valid_sha()   { [[ $1 =~ ^[0-9a-f]{40}$ ]]; }
 valid_label() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9\ ._+\&-]{0,63}$ ]]; }
 valid_https() { [[ $1 =~ ^https://[A-Za-z0-9._~:/?\#@!\$\&\(\)*+,\;=%-]{3,512}$ ]]; }
 valid_unit()  { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}\.(service|socket|timer|target|path|slice)$ ]]; }
+
+# Accept both active-theme state layouts. Current Omarchy writes theme.name;
+# older or alternate layouts may point `theme` at the selected theme instead.
+# Loadout drift and fallback must not report a false missing theme for either.
+active_theme_name() {
+  local state="$HOME/.local/state/omarchy/current" value="" target=""
+  if [[ -f $state/theme.name ]]; then
+    value=$(<"$state/theme.name")
+  elif [[ -L $state/theme ]]; then
+    target=$(readlink "$state/theme" 2>/dev/null || true)
+    [[ -n $target ]] && value=${target%/} && value=${value##*/}
+  fi
+  value="${value//[[:space:]]/}"
+  valid_theme "$value" && printf '%s\n' "$value"
+}
 # A schema version is compared with (( )), and bash arithmetic is not a numeric
 # context — it evaluates the *contents* of a bare name, recursively, and performs
 # command substitution inside an array subscript. A vault saying its
@@ -3149,8 +3438,7 @@ cmd_share() {
   step_start share "Reading this machine"
 
   local theme="" theme_url=""
-  [[ -f $HOME/.local/state/omarchy/current/theme.name ]] && theme=$(<"$HOME/.local/state/omarchy/current/theme.name")
-  theme="${theme//[[:space:]]/}"
+  theme=$(active_theme_name || true)
   valid_theme "$theme" || theme=""
   local theme_commit=""
   if [[ -n $theme && -d $HOME/.config/omarchy/themes/$theme ]]; then
@@ -3274,7 +3562,763 @@ fetch_profile() {
     die "loadout schema $(plain "$schema") is not readable by ress $VERSION"
 }
 
-cmd_apply() {
+canonical_remote() {
+  local value
+  value=$(strip_credentials "$1")
+  value="${value%.git}"
+  value="${value%/}"
+  printf '%s' "$value"
+}
+
+# Unknown profile fields stay powerless and are not part of local identity.
+# Invalid supported entries are omitted here and reported by apply planning.
+normalize_profile() {
+  local input="$1" output="$2" native=() aur=() plugins=() webapps=()
+  local value id url sha label icon
+  NORMALIZE_REFUSED_PACKAGES=0
+  NORMALIZE_REFUSED_INTEGRATIONS=0
+  while IFS= read -r value; do
+    if valid_pkg "$value"; then native+=("$value"); else NORMALIZE_REFUSED_PACKAGES=$((NORMALIZE_REFUSED_PACKAGES + 1)); fi
+  done \
+    < <(jq -r '.packages.native[]? // empty' "$input")
+  while IFS= read -r value; do
+    if valid_pkg "$value"; then aur+=("$value"); else NORMALIZE_REFUSED_PACKAGES=$((NORMALIZE_REFUSED_PACKAGES + 1)); fi
+  done \
+    < <(jq -r '.packages.aur[]? // empty' "$input")
+  while IFS=$'\t' read -r id url sha; do
+    [[ -n $id ]] || continue
+    url=$(canonical_remote "$url")
+    if ! valid_id "$id" || ! valid_https "$url" || { [[ -n $sha ]] && ! valid_sha "$sha"; }; then
+      NORMALIZE_REFUSED_INTEGRATIONS=$((NORMALIZE_REFUSED_INTEGRATIONS + 1)); continue
+    fi
+    plugins+=("$(jq -nc --arg id "$id" --arg url "$url" --arg commit "$sha" '$ARGS.named')")
+  done < <(jq -r '.plugins[]? | [.id, .url, (.commit // "")] | @tsv' "$input")
+  while IFS=$'\t' read -r label url icon; do
+    [[ -n $label ]] || continue
+    if ! valid_label "$label" || ! valid_https "$url"; then
+      NORMALIZE_REFUSED_INTEGRATIONS=$((NORMALIZE_REFUSED_INTEGRATIONS + 1)); continue
+    fi
+    valid_icon "$icon" || icon=""
+    webapps+=("$(jq -nc --arg name "$label" --arg url "$url" --arg icon "$icon" '$ARGS.named')")
+  done < <(jq -r '.webapps[]? | [.name, .url, (.icon // "")] | @tsv' "$input")
+
+  local theme_name theme_url theme_commit
+  theme_name=$(jq -r '.theme.name // ""' "$input")
+  theme_url=$(canonical_remote "$(jq -r '.theme.url // ""' "$input")")
+  theme_commit=$(jq -r '.theme.commit // ""' "$input")
+  valid_theme "$theme_name" || theme_name=""
+  valid_https "$theme_url" || theme_url=""
+  valid_sha "$theme_commit" || theme_commit=""
+
+  local native_json aur_json plugins_json webapps_json
+  native_json=$(printf '%s\n' "${native[@]:-}" | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')
+  aur_json=$(printf '%s\n' "${aur[@]:-}" | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')
+  if (( ${#plugins[@]} )); then
+    plugins_json=$(printf '%s\n' "${plugins[@]}" | jq -s 'sort_by(.id) | unique_by(.id)')
+  else plugins_json='[]'; fi
+  if (( ${#webapps[@]} )); then
+    webapps_json=$(printf '%s\n' "${webapps[@]}" | jq -s 'sort_by(.name) | unique_by(.name)')
+  else webapps_json='[]'; fi
+
+  jq -S -n \
+    --argjson schemaVersion "$PROFILE_SCHEMA" --arg kind omarchy-loadout \
+    --arg name "$(plain "$(jq -r '.name // "Untitled"' "$input")")" \
+    --arg author "$(plain "$(jq -r '.author // "unknown"' "$input")")" \
+    --arg description "$(plain "$(jq -r '.description // ""' "$input")")" \
+    --arg createdAt "$(plain "$(jq -r '.createdAt // "?"' "$input")")" \
+    --arg omarchy "$(plain "$(jq -r '.omarchy // "unknown"' "$input")")" \
+    --argjson native "$native_json" --argjson aur "$aur_json" \
+    --argjson plugins "$plugins_json" --argjson webapps "$webapps_json" \
+    --arg themeName "$theme_name" --arg themeUrl "$theme_url" --arg themeCommit "$theme_commit" \
+    '{schemaVersion: $schemaVersion, kind: $kind, name: $name, author: $author,
+      description: $description, createdAt: $createdAt, omarchy: $omarchy,
+      packages: {native: $native, aur: $aur}, plugins: $plugins, webapps: $webapps,
+      theme: {name: $themeName, url: $themeUrl, commit: $themeCommit}}' >"$output"
+}
+
+profile_digest() { jq -S -c . "$1" | sha256sum | awk '{print $1}'; }
+
+loadout_local_id() {
+  local name="$1" digest="$2" slug id n=12
+  slug=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' |
+    sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-48)
+  [[ -n $slug ]] || slug="loadout"
+  while :; do
+    id="$slug-${digest:0:n}"
+    if ! jq -e --arg id "$id" '.loadouts[] | select(.id == $id)' <<<"$REGISTRY" >/dev/null; then
+      printf '%s' "$id"; return 0
+    fi
+    [[ $(jq -r --arg id "$id" '.loadouts[] | select(.id == $id) | .digest' <<<"$REGISTRY") == "$digest" ]] &&
+      { printf '%s' "$id"; return 0; }
+    n=$((n + 4)); (( n <= 64 )) || die "could not assign a unique local loadout id"
+  done
+}
+
+profile_resources_json() {
+  local profile="$1" loadout_id="$2"
+  jq -c --arg loadout "$loadout_id" '
+    ([.packages.native[]? | {id:("package:" + .), kind:"package", name:.,
+       definition:{name:.}, requested:{channels:["native"]}}] +
+     [.packages.aur[]? | {id:("package:" + .), kind:"package", name:.,
+       definition:{name:.}, requested:{channels:["aur"]}}] +
+     [.plugins[]? | {id:("plugin:" + .id), kind:"plugin", name:.id,
+       definition:{id:.id,url:.url,commit:.commit}, requested:{}}] +
+     [.webapps[]? | {id:("webapp:" + .name), kind:"webapp", name:.name,
+       definition:{name:.name,url:.url,icon:.icon}, requested:{}}] +
+     [select(.theme.name != "") | {id:("theme-install:" + .theme.name),
+       kind:"theme-install", name:.theme.name,
+       definition:{name:.theme.name,url:.theme.url,commit:.theme.commit}, requested:{}}] +
+     [select(.theme.name != "") | {id:("theme-active:" + $loadout),
+       kind:"theme-active", name:.theme.name,
+       definition:{name:.theme.name}, requested:{}}]) |
+    sort_by(.id) | group_by(.id) | map(
+      if length == 1 then .[0]
+      else .[0] * {requested:{channels:([.[].requested.channels[]?] | unique)}} end)
+  ' "$profile"
+}
+
+resource_inspect_json() {
+  local resource="$1" kind name definition state evidence target actual_url actual_sha dirty parts actual_icon current
+  local resource_id effective_theme_loadout
+  resource_id=$(jq -r '.id' <<<"$resource")
+  kind=$(jq -r '.kind' <<<"$resource")
+  name=$(jq -r '.name' <<<"$resource")
+  definition=$(jq -c '.definition' <<<"$resource")
+  state="missing"; evidence='{}'
+  case "$kind" in
+    package)
+      if pacman -Q "$name" >/dev/null 2>&1; then
+        state="present"; evidence=$(jq -nc --arg name "$name" '{package:$name}')
+      fi
+      ;;
+    plugin)
+      target="$HOME/.config/omarchy/plugins/$name"
+      if [[ -L $target ]]; then
+        state="unverifiable"; evidence=$(jq -nc --arg target "$(readlink "$target")" '{symlink:$target}')
+      elif [[ -d $target ]]; then
+        actual_url=$(canonical_remote "$(git -C "$target" remote get-url origin 2>/dev/null || true)")
+        actual_sha=$(git -C "$target" rev-parse HEAD 2>/dev/null || true)
+        dirty=$(git -C "$target" status --porcelain 2>/dev/null || echo unknown)
+        evidence=$(jq -nc --arg url "$actual_url" --arg commit "$actual_sha" --arg dirty "$dirty" \
+          '{url:$url,commit:$commit,dirty:($dirty != "")}')
+        if [[ $actual_url != "$(jq -r '.url' <<<"$definition")" ]]; then state="conflicting"
+        elif [[ -n $(jq -r '.commit' <<<"$definition") && $actual_sha != "$(jq -r '.commit' <<<"$definition")" ]]; then state="modified"
+        elif [[ -n $dirty ]]; then state="modified"
+        elif [[ -f $target/manifest.json ]]; then state="present"
+        else state="conflicting"; fi
+      fi
+      ;;
+    webapp)
+      target="$HOME/.local/share/applications/$name.desktop"
+      if [[ -f $target ]]; then
+        parts=$(webapp_parts "$(launcher_exec "$target")" 2>/dev/null || true)
+        actual_icon=$(sed -n 's/^Icon=//p' "$target" | head -1)
+        if [[ -n $parts ]]; then
+          local launcher actual_web_url flags
+          IFS=$'\t' read -r launcher actual_web_url flags <<<"$parts"
+          evidence=$(jq -nc --arg url "$actual_web_url" --arg icon "$actual_icon" \
+            --arg digest "$(sha256sum "$target" | awk '{print $1}')" '{url:$url,icon:$icon,digest:$digest}')
+          if [[ $actual_web_url == "$(jq -r '.url' <<<"$definition")" ]] &&
+            { [[ -z $(jq -r '.icon' <<<"$definition") ]] || [[ $actual_icon == "$(jq -r '.icon' <<<"$definition")" ]]; }; then
+            state="present"
+          else state="modified"; fi
+        else state="unverifiable"; evidence=$(jq -nc --arg digest "$(sha256sum "$target" | awk '{print $1}')" '{digest:$digest}'); fi
+      fi
+      ;;
+    theme-install)
+      target="$HOME/.config/omarchy/themes/$name"
+      if [[ -d $target ]]; then
+        actual_url=$(canonical_remote "$(git -C "$target" remote get-url origin 2>/dev/null || true)")
+        actual_sha=$(git -C "$target" rev-parse HEAD 2>/dev/null || true)
+        dirty=$(git -C "$target" status --porcelain 2>/dev/null || echo unknown)
+        evidence=$(jq -nc --arg url "$actual_url" --arg commit "$actual_sha" --arg dirty "$dirty" \
+          '{url:$url,commit:$commit,dirty:($dirty != "")}')
+        if [[ -n $(jq -r '.url' <<<"$definition") && $actual_url != "$(jq -r '.url' <<<"$definition")" ]]; then state="conflicting"
+        elif [[ -n $(jq -r '.commit' <<<"$definition") && $actual_sha != "$(jq -r '.commit' <<<"$definition")" ]]; then state="modified"
+        elif [[ -n $dirty ]]; then state="modified"
+        else state="present"; fi
+      elif [[ -d $OMARCHY_DIR/themes/$name && -z $(jq -r '.url' <<<"$definition") ]]; then
+        state="present"; evidence='{"bundled":true}'
+      fi
+      ;;
+    theme-active)
+      current=$(active_theme_name || true)
+      effective_theme_loadout=$(jq -r '
+        . as $root |
+        [$root.claims[] as $claim |
+          $root.resources[] | select(.id == $claim.resourceId and .kind == "theme-active") as $theme |
+          $root.loadouts[] | select(.id == $claim.loadoutId) |
+          {id:.id,precedence:.precedence}] |
+        sort_by(.precedence) | last | .id // ""
+      ' <<<"$REGISTRY")
+      if jq -e --arg id "$resource_id" 'any(.resources[]; .id == $id)' <<<"$REGISTRY" >/dev/null &&
+        [[ ${resource_id#theme-active:} != "$effective_theme_loadout" ]]; then
+        state="present"
+        evidence=$(jq -nc --arg current "$current" '{current:$current,effective:false}')
+      else
+        evidence=$(jq -nc --arg current "$current" '{current:$current,effective:true}')
+        [[ $current == "$name" ]] && state="present" || state="missing"
+      fi
+      ;;
+  esac
+  jq -nc --arg state "$state" --argjson evidence "$evidence" '{state:$state,evidence:$evidence}'
+}
+
+loadout_json_view() {
+  local include_content="${1:-0}"
+  jq -c --argjson content "$include_content" '
+    [.loadouts[] as $l |
+      ([.claims[] | select(.loadoutId == $l.id)] | length) as $count |
+      ([.claims[] | select(.loadoutId == $l.id and .status != "healthy")] | length) as $attention |
+      ($l + {resourceCount:$count, attentionCount:$attention} |
+       if $content == 1 then . else del(.profile) end)]
+  ' <<<"$REGISTRY"
+}
+
+loadout_require() {
+  local id="$1"
+  jq -e --arg id "$id" '.loadouts[] | select(.id == $id)' <<<"$REGISTRY" >/dev/null ||
+    die "no tracked loadout: $(plain "$id")"
+}
+
+loadout_check_json() {
+  local wanted="${1:-}" loadouts='[]' loadout claims claim resource observation rows state attention claim_state cleanup health_state
+  while IFS= read -r loadout; do
+    claims=$(jq -c --arg id "$(jq -r '.id' <<<"$loadout")" '[.claims[] | select(.loadoutId == $id)]' <<<"$REGISTRY")
+    rows='[]'; attention=0
+    while IFS= read -r claim; do
+      resource=$(jq -c --arg id "$(jq -r '.resourceId' <<<"$claim")" '.resources[] | select(.id == $id)' <<<"$REGISTRY")
+      observation=$(resource_inspect_json "$resource")
+      state=$(jq -r '.state' <<<"$observation")
+      claim_state=$(jq -r '.status' <<<"$claim"); cleanup=$(jq -r '.cleanupPolicy' <<<"$resource")
+      if [[ $claim_state != healthy ]]; then
+        case "$claim_state" in deferred|removal-pending) health_state="pending" ;; *) health_state="$claim_state" ;; esac
+      elif [[ $state == present && $cleanup == retain ]]; then health_state="protected"
+      else health_state="$state"
+      fi
+      [[ $health_state == present || $health_state == protected ]] || attention=$((attention + 1))
+      rows=$(jq -c --argjson resource "$resource" --argjson claim "$claim" --argjson observation "$observation" \
+        --arg health "$health_state" \
+        '. + [($resource + {claimStatus:$claim.status,healthState:$health,currentState:$observation.state,currentEvidence:$observation.evidence})]' <<<"$rows")
+    done < <(jq -c '.[]' <<<"$claims")
+    loadouts=$(jq -c --argjson loadout "$loadout" --argjson resources "$rows" --argjson attention "$attention" \
+      '. + [($loadout | del(.profile) | . + {attentionCount:$attention,resources:$resources} |
+        if $attention > 0 and .state != "removal-pending" then .state="drifted" else . end)]' <<<"$loadouts")
+  done < <(jq -c --arg id "$wanted" '.loadouts[] | select($id == "" or .id == $id)' <<<"$REGISTRY")
+  jq -nc --argjson loadouts "$loadouts" '{healthy:(all($loadouts[]; .attentionCount == 0)),loadouts:$loadouts}'
+}
+
+registry_recover_operation() {
+  [[ $(jq -r '.operation == null' <<<"$REGISTRY") == true ]] && return 0
+  local kind target action rid resource observation state next
+  kind=$(jq -r '.operation.kind' <<<"$REGISTRY")
+  target=$(jq -r '.operation.target' <<<"$REGISTRY")
+  while IFS= read -r action; do
+    [[ $(jq -r '.state' <<<"$action") == running ]] || continue
+    rid=$(jq -r '.resourceId' <<<"$action")
+    resource=$(jq -c --arg id "$rid" '.resources[] | select(.id == $id)' <<<"$REGISTRY")
+    [[ -n $resource ]] || continue
+    observation=$(resource_inspect_json "$resource"); state=$(jq -r '.state' <<<"$observation")
+    if [[ $kind == remove ]]; then
+      if [[ $state == missing ]]; then
+        next=$(jq -c --arg rid "$rid" '.operation.actions |= map(if .resourceId == $rid then .state="done" else . end)' <<<"$REGISTRY")
+      elif [[ $state == present ]]; then
+        next=$(jq -c --arg rid "$rid" '.operation.actions |= map(if .resourceId == $rid then .state="planned" else . end)' <<<"$REGISTRY")
+      else
+        next=$(jq -c --arg rid "$rid" --arg target "$target" '
+          .operation.actions |= map(if .resourceId == $rid then .state="uncertain" else . end) |
+          .claims |= map(if .loadoutId == $target and .resourceId == $rid then .status="uncertain" | .lastError="interrupted removal has ambiguous evidence" else . end)' <<<"$REGISTRY")
+      fi
+    else
+      if [[ $state == present ]]; then
+        next=$(jq -c --arg rid "$rid" --arg target "$target" --argjson evidence "$(jq -c '.evidence' <<<"$observation")" '
+          .operation.actions |= map(if .resourceId == $rid then .state="done" else . end) |
+          .resources |= map(if .id == $rid then .state="present" | .evidence=$evidence else . end) |
+          .claims |= map(if .loadoutId == $target and .resourceId == $rid then .status="healthy" | .lastError="" else . end)' <<<"$REGISTRY")
+      elif [[ $state == missing ]]; then
+        next=$(jq -c --arg rid "$rid" '.operation.actions |= map(if .resourceId == $rid then .state="planned" else . end)' <<<"$REGISTRY")
+      else
+        next=$(jq -c --arg rid "$rid" --arg target "$target" '
+          .operation.actions |= map(if .resourceId == $rid then .state="uncertain" else . end) |
+          .claims |= map(if .loadoutId == $target and .resourceId == $rid then .status="uncertain" | .lastError="interrupted action has ambiguous evidence" else . end)' <<<"$REGISTRY")
+      fi
+    fi
+    registry_save "$next"
+  done < <(jq -c '.operation.actions[]' <<<"$REGISTRY")
+  if jq -e --arg target "$target" '.loadouts[] | select(.id == $target)' <<<"$REGISTRY" >/dev/null; then
+    next=$(jq -c --arg target "$target" '
+      . as $root | .loadouts |= map(if .id == $target then
+        .state=(if any($root.claims[]; .loadoutId == $target and .status == "conflicting") then "conflicting"
+          elif any($root.claims[]; .loadoutId == $target and .status != "healthy") then "pending"
+          else "healthy" end) else . end)' <<<"$REGISTRY")
+    [[ $next == "$REGISTRY" ]] || registry_save "$next"
+  fi
+  if jq -e '.operation != null and all(.operation.actions[]; .state == "done" or .state == "skipped")' <<<"$REGISTRY" >/dev/null; then
+    registry_finish_operation
+  fi
+  note "reconciled an interrupted $kind operation for $target"
+}
+
+critical_package() {
+  case "$1" in
+    ress|pacman|yay|sudo|base|base-devel|omarchy|omarchy-*|quickshell|hyprland|systemd|glibc|linux) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+plugin_remove_supported() {
+  local name="$1" target="$HOME/.config/omarchy/plugins/$1" shim rc=0
+
+  # Prefer Omarchy's normal path so a live shell can report enabled state,
+  # unload the plugin, and rescan after removal.
+  omarchy plugin remove --yes "$name" >/dev/null 2>&1 && return 0
+  [[ ! -e $target && ! -L $target ]] && return 0
+
+  # omarchy-plugin-remove currently asks shell IPC for enabled state before it
+  # deletes anything. A clean TTY/SSH machine has no shell to query. Once that
+  # absence is confirmed, rerun the same supported remover with a narrowly
+  # scoped shim: no running shell means no live enabled plugin to unload and no
+  # live process to rescan. All path validation and deletion remain Omarchy's.
+  omarchy-shell shell ping >/dev/null 2>&1 && return 1
+  # IPC can fail while a shell process is starting or temporarily unhealthy.
+  # In that case fail closed instead of pretending there is no live consumer.
+  pgrep -u "$UID" -x quickshell >/dev/null 2>&1 && return 1
+  shim=$(mktemp -d)
+  cat >"$shim/omarchy-shell" <<'SHIM'
+#!/bin/bash
+case "${1:-} ${2:-}" in
+  "shell listPlugins") printf '[]\n' ;;
+  "shell rescanPlugins") ;;
+  *) exit 1 ;;
+esac
+SHIM
+  chmod 700 "$shim/omarchy-shell"
+  PATH="$shim:$PATH" omarchy plugin remove --yes "$name" >/dev/null 2>&1 || rc=$?
+  rm -f "$shim/omarchy-shell"
+  rmdir "$shim" 2>/dev/null || true
+  return "$rc"
+}
+
+resource_remove_adapter() {
+  local resource="$1" allow_changed="${2:-0}" kind name observation current
+  kind=$(jq -r '.kind' <<<"$resource"); name=$(jq -r '.name' <<<"$resource")
+  observation=$(resource_inspect_json "$resource")
+  current=$(jq -r '.state' <<<"$observation")
+  if [[ $current != present ]]; then
+    (( allow_changed )) && [[ $current == modified || $current == conflicting ]] || return 2
+  fi
+  case "$kind" in
+    package)
+      critical_package "$name" && return 3
+      sudo pacman -R --noconfirm -- "$name" >/dev/null 2>&1 || return 1
+      local orphans; orphans=$(pacman -Qtdq 2>/dev/null || true)
+      [[ -z $orphans ]] || note "unneeded dependencies remain (not removed): $(tr '\n' ' ' <<<"$orphans")"
+      ;;
+    plugin) plugin_remove_supported "$name" || true ;;
+    # Some Omarchy versions remove the launcher successfully and then return a
+    # failure from a best-effort desktop-database refresh. The machine
+    # postcondition is authoritative: keep the claim only when the launcher is
+    # still present (or its state is otherwise unsafe), not merely because the
+    # delegated command's final helper failed.
+    webapp) omarchy webapp remove "$name" >/dev/null 2>&1 || true ;;
+    theme-install) omarchy theme remove "$name" >/dev/null 2>&1 || return 1 ;;
+    theme-active) return 0 ;;
+    *) return 1 ;;
+  esac
+  [[ $kind == theme-active ]] || [[ $(jq -r '.state' <<<"$(resource_inspect_json "$resource")") == missing ]]
+}
+
+theme_release_effect() {
+  local loadout="$1" resource="$2" current target fallback="" baseline
+  target=$(jq -r '.name' <<<"$resource")
+  current=$(active_theme_name || true)
+  [[ $current == "$target" ]] || return 0
+  fallback=$(jq -r --arg removed "$loadout" '
+    . as $root |
+    [$root.claims[] | select(.loadoutId != $removed) as $c |
+      $root.resources[] | select(.id == $c.resourceId and .kind == "theme-active") as $r |
+      $root.loadouts[] | select(.id == $c.loadoutId) | {name:$r.name,precedence}] |
+    sort_by(.precedence) | last | .name // ""' <<<"$REGISTRY")
+  baseline=$(jq -r '.baseline.activeTheme // ""' <<<"$REGISTRY")
+  [[ -n $fallback ]] || fallback="$baseline"
+  if [[ -n $fallback && $fallback != "$target" ]]; then
+    omarchy theme set "$fallback" >/dev/null 2>&1 || return 1
+  fi
+}
+
+release_claim() {
+  local loadout="$1" rid="$2" decision="${3:-}" resource observation state cleanup others rc=0 next
+  resource=$(jq -c --arg id "$rid" '.resources[] | select(.id == $id)' <<<"$REGISTRY")
+  [[ -n $resource ]] || return 0
+  cleanup=$(jq -r '.cleanupPolicy' <<<"$resource")
+  others=$(jq --arg loadout "$loadout" --arg rid "$rid" '[.claims[] | select(.resourceId == $rid and .loadoutId != $loadout)] | length' <<<"$REGISTRY")
+  observation=$(resource_inspect_json "$resource"); state=$(jq -r '.state' <<<"$observation")
+  if (( others > 0 )) || [[ $cleanup == retain || $state == missing ]]; then
+    :
+  elif [[ $(jq -r '.kind' <<<"$resource") == theme-active ]]; then
+    theme_release_effect "$loadout" "$resource" || return 1
+  elif [[ $state == present && $cleanup == remove ]]; then
+    resource_remove_adapter "$resource" || rc=$?
+    (( rc == 0 )) || return "$rc"
+  elif [[ $state == modified || $state == conflicting || $state == unverifiable || $state == uncertain ]]; then
+    if [[ $decision == keep ]]; then
+      REGISTRY=$(jq -c --arg rid "$rid" '.resources |= map(if .id == $rid then .cleanupPolicy="retain" else . end)' <<<"$REGISTRY")
+    elif [[ $decision == remove ]]; then
+      resource_remove_adapter "$resource" 1 || rc=$?
+      (( rc == 0 )) || return "$rc"
+    else return 4
+    fi
+  else return 4
+  fi
+  next=$(jq -c --arg loadout "$loadout" --arg rid "$rid" '
+    .claims |= map(select(.loadoutId != $loadout or .resourceId != $rid)) |
+    if any(.claims[]; .resourceId == $rid) then . else .resources |= map(select(.id != $rid)) end |
+    if .operation != null then .operation.actions |= map(if .resourceId == $rid then .state="done" else . end) else . end
+  ' <<<"$REGISTRY")
+  registry_save "$next"
+}
+
+repair_loadout() {
+  local wanted="${1:-}" check plan='[]' loadout claim resource observation state item actions id
+  [[ -z $wanted ]] || loadout_require "$wanted"
+  while IFS= read -r loadout; do
+    id=$(jq -r '.id' <<<"$loadout")
+    while IFS= read -r claim; do
+      resource=$(jq -c --arg rid "$(jq -r '.resourceId' <<<"$claim")" '.resources[] | select(.id == $rid)' <<<"$REGISTRY")
+      observation=$(resource_inspect_json "$resource"); state=$(jq -r '.state' <<<"$observation")
+      if [[ $state == missing ]]; then
+        item=$(jq -nc --argjson r "$resource" --argjson c "$claim" '$r | {id,kind,name,definition} + {requested:$c.requested}')
+        local repair_action="repair"
+        if [[ $(jq -r '.kind' <<<"$resource") == plugin || $(jq -r '.kind' <<<"$resource") == theme-install ]] &&
+          [[ -n $(jq -r '.definition.url // ""' <<<"$resource") && -z $(jq -r '.definition.commit // ""' <<<"$resource") ]] &&
+          (( ! ALLOW_UNPINNED )); then repair_action="defer"; fi
+        plan=$(jq -c --arg id "$id" --argjson item "$item" --arg action "$repair_action" \
+          '. + [{loadoutId:$id,item:$item,action:$action}]' <<<"$plan")
+      fi
+    done < <(jq -c --arg id "$id" '.claims[] | select(.loadoutId == $id)' <<<"$REGISTRY")
+  done < <(jq -c --arg id "$wanted" '.loadouts[] | select($id == "" or .id == $id)' <<<"$REGISTRY")
+  if [[ $(jq 'length' <<<"$plan") == 0 ]]; then
+    emit "DONE|ok|no missing loadout resources"
+    (( PORCELAIN )) || printf 'No missing loadout resources need repair.\n'
+    return 0
+  fi
+  if (( PORCELAIN )); then
+    while IFS= read -r item; do emit "LOG|plan: $(jq -r 'if .action == "repair" then "REINSTALL" else "DEFER" end' <<<"$item") $(jq -r '.item.id' <<<"$item")"; done < <(jq -c '.[]' <<<"$plan")
+  else
+    printf 'Repair plan:\n'
+    jq -r '.[] | "  " + (if .action == "repair" then "REINSTALL" else "DEFER   " end) + "  " + .item.id +
+      (if .action == "defer" then " (names no commit; pass --allow-unpinned)" else "" end)' <<<"$plan"
+  fi
+  if (( DRY_RUN )); then emit "DONE|ok|repair dry run complete"; (( PORCELAIN )) || printf 'Dry run — nothing was changed.\n'; return 0; fi
+  if ! jq -e 'any(.[]; .action == "repair")' <<<"$plan" >/dev/null; then
+    emit "DONE|partial|no safely pinned resources can be repaired"
+    (( PORCELAIN )) || printf 'No safely pinned resources can be repaired in this run.\n'
+    return 1
+  fi
+  confirm "Repair these loadout resources?" || die "cancelled"
+  actions=$(jq -c '[.[] | {resourceId:.item.id,state:"planned"}]' <<<"$plan")
+  # Repairing more than one loadout is intentionally performed as one target at
+  # a time so every journal target remains a valid loadout identity.
+  while IFS= read -r id; do
+    local scoped native=() aur=() entry pkg rid result observation evidence
+    scoped=$(jq -c --arg id "$id" '[.[] | select(.loadoutId == $id and .action == "repair")]' <<<"$plan")
+    [[ $(jq 'length' <<<"$scoped") -gt 0 ]] || continue
+    registry_begin_operation repair "$id" "$(jq -c '[.[] | {resourceId:.item.id,state:"planned"}]' <<<"$scoped")"
+    while IFS= read -r entry; do
+      [[ $(jq -r '.item.kind' <<<"$entry") == package ]] || continue
+      pkg=$(jq -r '.item.name' <<<"$entry")
+      if jq -e '.item.requested.channels | index("native")' <<<"$entry" >/dev/null; then native+=("$pkg"); else aur+=("$pkg"); fi
+    done < <(jq -c 'sort_by(if .item.kind == "theme-active" then 1 else 0 end)[]' <<<"$scoped")
+    if (( ${#native[@]} )); then
+      sudo pacman -S --needed --noconfirm -- "${native[@]}" >/dev/null 2>&1 || true
+    fi
+    if (( ${#aur[@]} )); then
+      aur_gate repair "${aur[@]}"
+      [[ $AUR_MODE == skip ]] || { have yay && aur_install repair "${AUR_KEPT[@]}"; } || true
+    fi
+    while IFS= read -r entry; do
+      rid=$(jq -r '.item.id' <<<"$entry")
+      if [[ $(jq -r '.item.kind' <<<"$entry") != package ]]; then
+        apply_one_resource "$id" "$(jq -c '.item' <<<"$entry")" repair
+        continue
+      fi
+      observation=$(resource_inspect_json "$(jq -c --arg rid "$rid" '.resources[] | select(.id == $rid)' <<<"$REGISTRY")")
+      evidence=$(jq -c '.evidence' <<<"$observation")
+      if [[ $(jq -r '.state' <<<"$observation") == present ]]; then
+        registry_set_claim_result "$id" "$rid" healthy present "$evidence"
+      else
+        registry_set_claim_result "$id" "$rid" pending missing "$evidence" "package remains missing"
+      fi
+    done < <(jq -c 'sort_by(if .item.kind == "theme-active" then 1 else 0 end)[]' <<<"$scoped")
+    registry_finish_operation
+  done < <(jq -r '.[].loadoutId' <<<"$plan" | sort -u)
+  check=$(loadout_check_json "$wanted")
+  if [[ $(jq -r '.healthy' <<<"$check") == true ]]; then emit "DONE|ok|repair complete"; return 0; fi
+  emit "DONE|partial|repair finished with unresolved resources"
+  return 1
+}
+
+remove_loadout() {
+  local id="$1" decision="${2:-}" claim rid resource observation state cleanup others classification plan='[]' actions next failures=0 rc
+  loadout_require "$id"
+  while IFS= read -r claim; do
+    rid=$(jq -r '.resourceId' <<<"$claim")
+    resource=$(jq -c --arg rid "$rid" '.resources[] | select(.id == $rid)' <<<"$REGISTRY")
+    observation=$(resource_inspect_json "$resource"); state=$(jq -r '.state' <<<"$observation")
+    cleanup=$(jq -r '.cleanupPolicy' <<<"$resource")
+    others=$(jq --arg id "$id" --arg rid "$rid" '[.claims[] | select(.resourceId == $rid and .loadoutId != $id)] | length' <<<"$REGISTRY")
+    if (( others > 0 )); then classification="release-only"
+    elif [[ $cleanup == retain ]]; then classification="retain"
+    elif [[ $state == missing ]]; then classification="already-absent"
+    elif [[ $(jq -r '.kind' <<<"$resource") == package ]] && critical_package "$(jq -r '.name' <<<"$resource")"; then classification="protected"
+    elif [[ $state == present && $cleanup == remove ]]; then classification="delete"
+    else classification="decision-required"; fi
+    plan=$(jq -c --argjson resource "$resource" --arg state "$state" --arg classification "$classification" \
+      '. + [{resource:$resource,currentState:$state,classification:$classification}]' <<<"$plan")
+  done < <(jq -c --arg id "$id" '.claims[] | select(.loadoutId == $id)' <<<"$REGISTRY")
+  if (( PORCELAIN )); then
+    while IFS= read -r item; do emit "LOG|plan: $(jq -r '.classification|ascii_upcase' <<<"$item") $(jq -r '.resource.id' <<<"$item") ($(jq -r '.currentState' <<<"$item"))"; done < <(jq -c '.[]' <<<"$plan")
+  else
+    printf 'Remove loadout %s:\n' "$id"
+    jq -r '.[] | "  " + (.classification|ascii_upcase) + "  " + .resource.id + " (" + .currentState + ")"' <<<"$plan"
+  fi
+  if jq -e 'any(.[]; .classification == "decision-required")' <<<"$plan" >/dev/null && [[ -z $decision ]]; then
+    emit "DONE|partial|changed resources need an explicit keep or remove decision"
+    (( PORCELAIN )) || printf 'Changed or unverifiable resources need an explicit --keep-modified or --remove-modified decision.\n'
+    return 2
+  fi
+  if (( DRY_RUN )); then emit "DONE|ok|remove dry run complete"; (( PORCELAIN )) || printf 'Dry run — nothing was changed.\n'; return 0; fi
+  confirm "Remove this loadout and the eligible resources above?" || die "cancelled"
+  actions=$(jq -c '[.[] | {resourceId:.resource.id,state:"planned"}]' <<<"$plan")
+  next=$(jq -c --arg id "$id" '.loadouts |= map(if .id == $id then .state="removal-pending" else . end) |
+    .claims |= map(if .loadoutId == $id then .status="removal-pending" else . end)' <<<"$REGISTRY")
+  registry_save "$next"
+  registry_begin_operation remove "$id" "$actions"
+  while IFS= read -r rid; do
+    registry_action_state "$rid" running
+    rc=0; release_claim "$id" "$rid" "$decision" || rc=$?
+    if (( rc != 0 )); then
+      failures=$((failures + 1))
+      next=$(jq -c --arg id "$id" --arg rid "$rid" --arg msg "cleanup refused or failed (code $rc)" '
+        .claims |= map(if .loadoutId == $id and .resourceId == $rid then .status="removal-pending" | .lastError=$msg else . end) |
+        .operation.actions |= map(if .resourceId == $rid then .state=(if $msg|contains("code 4") then "uncertain" else "failed" end) else . end)' <<<"$REGISTRY")
+      registry_save "$next"
+    fi
+  done < <(jq -r '.[].resource.id' <<<"$plan")
+  if (( failures == 0 )) && ! jq -e --arg id "$id" '.claims[] | select(.loadoutId == $id)' <<<"$REGISTRY" >/dev/null; then
+    next=$(jq -c --arg id "$id" '.loadouts |= map(select(.id != $id)) | .operation=null' <<<"$REGISTRY")
+    registry_save "$next"
+    emit "DONE|ok|loadout removed"
+    (( PORCELAIN )) || printf 'Loadout %s removed from tracking.\n' "$id"
+    return 0
+  fi
+  emit "DONE|partial|loadout remains removal-pending"
+  (( PORCELAIN )) || printf 'Loadout %s remains removal-pending; rerun after resolving the reported resources.\n' "$id"
+  return 1
+}
+
+update_loadout() {
+  local id="$1" source="${2:-}" decision="${3:-}" old new_profile digest new_resources old_ids new_ids retained added withdrawn plan='[]'
+  local rid item resource definition observation action status registry_resource next now precedence failures=0 rc
+  loadout_require "$id"
+  old=$(jq -c --arg id "$id" '.loadouts[] | select(.id == $id)' <<<"$REGISTRY")
+  [[ -n $source ]] || source=$(jq -r '.source' <<<"$old")
+  [[ -n $source ]] || die "this loadout has no reusable source; pass SOURCE"
+  source=$(normalize_source "$source")
+  APPLY_WORK=$(mktemp -d)
+  fetch_profile "$source" "$APPLY_WORK"
+  new_profile="$APPLY_WORK/normalized.json"
+  normalize_profile "$APPLY_WORK/profile.json" "$new_profile"
+  digest=$(profile_digest "$new_profile")
+  if [[ $digest == "$(jq -r '.digest' <<<"$old")" ]]; then
+    emit "LOG|profile unchanged; checking for repair"
+    (( PORCELAIN )) || printf 'The fetched profile is unchanged; checking for repair instead.\n'
+    repair_loadout "$id"
+    return $?
+  fi
+  new_resources=$(profile_resources_json "$new_profile" "$id")
+  old_ids=$(jq -c --arg id "$id" '[.claims[] | select(.loadoutId == $id) | .resourceId]' <<<"$REGISTRY")
+  new_ids=$(jq -c '[.[].id]' <<<"$new_resources")
+  retained=$(jq -nc --argjson old "$old_ids" --argjson new "$new_ids" '$old - ($old - $new)')
+  added=$(jq -nc --argjson old "$old_ids" --argjson new "$new_ids" '$new - $old')
+  withdrawn=$(jq -nc --argjson old "$old_ids" --argjson new "$new_ids" '$old - $new')
+  if (( PORCELAIN )); then
+    while IFS= read -r rid; do emit "LOG|plan: RETAIN $rid"; done < <(jq -r '.[]' <<<"$retained")
+    while IFS= read -r rid; do emit "LOG|plan: ADD $rid"; done < <(jq -r '.[]' <<<"$added")
+    while IFS= read -r rid; do emit "LOG|plan: WITHDRAW $rid"; done < <(jq -r '.[]' <<<"$withdrawn")
+  else
+    printf 'Update loadout %s:\n' "$id"
+    jq -r '.[] | "  RETAIN    " + .' <<<"$retained"
+    jq -r '.[] | "  ADD       " + .' <<<"$added"
+    jq -r '.[] | "  WITHDRAW  " + .' <<<"$withdrawn"
+  fi
+  # Build the complete new claim plan so definition conflicts are reviewed too.
+  plan=$(build_apply_plan "$new_profile" "$id")
+  if (( PORCELAIN )); then
+    while IFS= read -r rid; do emit "LOG|plan: CONFLICT $rid"; done < <(jq -r '.[] | select(.action == "conflict") | .item.id' <<<"$plan")
+  else jq -r '.[] | select(.action == "conflict") | "  CONFLICT  " + .item.id' <<<"$plan"; fi
+  if (( DRY_RUN )); then emit "DONE|ok|update dry run complete"; (( PORCELAIN )) || printf 'Dry run — nothing was changed.\n'; return 0; fi
+  confirm "Update this tracked loadout?" || die "cancelled"
+
+  registry_begin_operation update "$id" "$(jq -nc --argjson old "$withdrawn" --argjson plan "$plan" '
+    ([$old[] | {resourceId:.,state:"planned"}] +
+     [$plan[] | select(.action == "install" or .action == "activate") | {resourceId:.item.id,state:"planned"}])')"
+  while IFS= read -r rid; do
+    registry_action_state "$rid" running
+    rc=0; release_claim "$id" "$rid" "$decision" || rc=$?
+    if (( rc != 0 )); then failures=$((failures + 1)); fi
+  done < <(jq -r '.[]' <<<"$withdrawn")
+  if (( failures > 0 )); then
+    emit "DONE|partial|withdrawn resources could not be resolved"
+    (( PORCELAIN )) || printf 'Update is pending because withdrawn resources could not be resolved.\n'
+    return 1
+  fi
+
+  now=$(date -u +%s)
+  precedence=$(jq '[.loadouts[].precedence] | max // 0 | . + 1' <<<"$REGISTRY")
+  next=$(jq -c --arg id "$id" --arg source "$(strip_credentials "$source")" --arg digest "$digest" \
+    --argjson profile "$(<"$new_profile")" --argjson plan "$plan" --argjson now "$now" --argjson precedence "$precedence" '
+    .loadouts |= map(if .id == $id then
+      .name=$profile.name | .author=$profile.author | .description=$profile.description |
+      .source=$source | .digest=$digest | .profile=$profile | .updatedAt=$now |
+      .precedence=$precedence | .state="pending" else . end) |
+    reduce $plan[] as $p (.;
+      if any(.resources[]; .id == $p.resource.id) then . else .resources += [$p.resource] end |
+      if any(.claims[]; .loadoutId == $id and .resourceId == $p.resource.id) then
+        .claims |= map(if .loadoutId == $id and .resourceId == $p.resource.id then
+          .requested=($p.item.definition + $p.item.requested) | .status=$p.claimStatus |
+          .lastError=(if $p.claimStatus == "conflicting" then "incompatible resource definition" else "" end)
+          else . end)
+      else .claims += [{loadoutId:$id,resourceId:$p.resource.id,
+        requested:($p.item.definition + $p.item.requested),status:$p.claimStatus,
+        lastError:(if $p.claimStatus == "conflicting" then "incompatible resource definition" else "" end)}] end) |
+    .operation=null
+  ' <<<"$REGISTRY")
+  registry_save "$next"
+  ASSUME_YES=1
+  repair_loadout "$id" || true
+  local check; check=$(loadout_check_json "$id")
+  if [[ $(jq -r '.healthy' <<<"$check") == true ]]; then
+    emit "DONE|ok|loadout updated"
+    (( PORCELAIN )) || printf 'Loadout %s updated.\n' "$id"
+    return 0
+  fi
+  emit "DONE|partial|loadout updated with resources that need attention"
+  (( PORCELAIN )) || printf 'Loadout %s updated with resources that still need attention.\n' "$id"
+  return 1
+}
+
+cmd_loadout_mutation() {
+  local sub="$1"; shift
+  case "$sub" in
+    check)
+      local id="" as_json=0 result
+      while (( $# )); do case "$1" in --json) as_json=1;; *) [[ -z $id ]] || die "usage: ress loadout check [ID] [--json]"; id="$1";; esac; shift; done
+      registry_load
+      [[ -z $id ]] || loadout_require "$id"
+      result=$(loadout_check_json "$id")
+      if (( as_json )); then jq . <<<"$result"
+      else
+        if [[ $(jq '.loadouts|length' <<<"$result") == 0 ]]; then printf 'No loadouts are tracked on this machine.\n'
+        else jq -r '.loadouts[] | .name + " [" + .id + "]: " + (if .attentionCount == 0 then "healthy" else (.attentionCount|tostring) + " resources need attention" end), (.resources[] | "  " + .currentState + "  " + .id)' <<<"$result"; fi
+      fi
+      [[ $(jq -r '.healthy' <<<"$result") == true ]]
+      ;;
+    repair)
+      local id="${1:-}"; [[ $# -le 1 ]] || die "usage: ress loadout repair [ID]"
+      ensure_loadout_lock; registry_load; registry_recover_operation
+      repair_loadout "$id"
+      ;;
+    remove)
+      local id="${1:-}" decision=""; [[ -n $id ]] || die "usage: ress loadout remove ID [--keep-modified|--remove-modified]"; shift || true
+      while (( $# )); do case "$1" in --keep-modified) decision=keep;; --remove-modified) decision=remove;; *) die "unknown loadout remove option: $1";; esac; shift; done
+      ensure_loadout_lock; registry_load; registry_recover_operation
+      remove_loadout "$id" "$decision"
+      ;;
+    update)
+      local id="${1:-}" source="" decision=""; [[ -n $id ]] || die "usage: ress loadout update ID [SOURCE] [--keep-modified|--remove-modified]"; shift || true
+      while (( $# )); do
+        case "$1" in
+          --keep-modified) decision=keep ;;
+          --remove-modified) decision=remove ;;
+          *) [[ -z $source ]] || die "usage: ress loadout update ID [SOURCE] [--keep-modified|--remove-modified]"; source="$1" ;;
+        esac
+        shift
+      done
+      ensure_loadout_lock; registry_load; registry_recover_operation
+      update_loadout "$id" "$source" "$decision"
+      ;;
+  esac
+}
+
+cmd_loadout() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    list)
+      local as_json=0 details=0 contents=0
+      while (( $# )); do
+        case "$1" in --json) as_json=1;; --details) details=1;; --contents) contents=1;; *) die "unknown loadout list option: $1";; esac
+        shift
+      done
+      registry_load
+      local view; view=$(loadout_json_view "$contents")
+      if (( as_json )); then jq -n --argjson loadouts "$view" '{loadouts:$loadouts}'; return; fi
+      if [[ $(jq 'length' <<<"$view") == 0 ]]; then printf 'No loadouts are tracked on this machine.\n'; return; fi
+      jq -r --argjson details "$details" '.[] |
+        (.id + "\t" + .state + "\t" + (.resourceCount|tostring) + " resources" +
+         (if .attentionCount > 0 then ", " + (.attentionCount|tostring) + " need attention" else "" end) +
+         (if $details == 1 then "\t" + .name + " by " + .author else "" end))' <<<"$view" |
+        column -t -s $'\t'
+      ;;
+    show)
+      local id="${1:-}" as_json=0 contents=0; [[ -n $id ]] || die "usage: ress loadout show <id> [--json] [--contents]"; shift || true
+      while (( $# )); do case "$1" in --json) as_json=1;; --contents) contents=1;; *) die "unknown loadout show option: $1";; esac; shift; done
+      registry_load
+      local result
+      result=$(jq -c --arg id "$id" --argjson content "$contents" '
+        . as $root | $root.loadouts[] | select(.id == $id) as $l |
+        [$l, ([$root.claims[] | select(.loadoutId == $id)]),
+         ([$root.resources[] as $r | select(any($root.claims[]; .loadoutId == $id and .resourceId == $r.id)) | $r])] |
+        {loadout:(.[0] + {resourceCount:(.[1]|length),attentionCount:([.[1][]|select(.status != "healthy")]|length)} |
+          if $content == 1 then . else del(.profile) end), claims:.[1], resources:.[2]}
+      ' <<<"$REGISTRY")
+      [[ -n $result ]] || die "no tracked loadout: $(plain "$id")"
+      (( as_json )) && { jq . <<<"$result"; return; }
+      jq -r '.loadout | "\(.name) [\(.id)]\nstate: \(.state)\nsource: \(.source)\nresources: \(.resourceCount // 0)"' <<<"$result"
+      (( contents )) && jq '.loadout.profile' <<<"$result"
+      ;;
+    check|repair|remove|update) cmd_loadout_mutation "$sub" "$@" ;;
+    *) die "unknown loadout command: $(plain "$sub")" ;;
+  esac
+}
+
+cmd_resource() {
+  local sub="${1:-list}"; shift || true
+  registry_load
+  case "$sub" in
+    list)
+      local as_json=0 wanted=""
+      while (( $# )); do case "$1" in --json) as_json=1;; --state) wanted="${2:-}"; shift;; *) die "unknown resource list option: $1";; esac; shift; done
+      local result; result=$(jq -c --arg state "$wanted" '[.resources[] | select($state == "" or .state == $state)]' <<<"$REGISTRY")
+      (( as_json )) && { jq -n --argjson resources "$result" '{resources:$resources}'; return; }
+      jq -r '.[] | [.id,.state,.cleanupPolicy] | @tsv' <<<"$result" | column -t -s $'\t'
+      ;;
+    show)
+      local id="${1:-}" as_json=0; [[ -n $id ]] || die "usage: ress resource show <kind:name> [--json]"; shift || true
+      [[ ${1:-} == --json ]] && as_json=1
+      local result; result=$(jq -c --arg id "$id" '
+        . as $root | $root.resources[] | select(.id == $id) as $r |
+        $r + {claimants:[$root.claims[] | select(.resourceId == $id) | .loadoutId]}
+      ' <<<"$REGISTRY")
+      [[ -n $result ]] || die "no tracked resource: $(plain "$id")"
+      (( as_json )) && { jq . <<<"$result"; return; }
+      jq -r '"\(.id)\nstate: \(.state)\norigin: \(if .firstObserved == "absent" then "installed by ress" elif .firstObserved == "present" then "already present" else "unknown" end)\ncleanup: \(.cleanupPolicy)\nloadouts: \(.claimants | join(", "))"' <<<"$result"
+      ;;
+    *) die "unknown resource command: $(plain "$sub")" ;;
+  esac
+}
+
+cmd_apply_legacy() {
   local source="${1:-}"
   [[ -n $source ]] || die "usage: ress apply <ress.sh/gh/user/repo | git-url | profile.json>"
   source=$(normalize_source "$source")
@@ -3353,8 +4397,7 @@ cmd_apply() {
   local theme_sha; theme_sha=$(jq -r '.theme.commit // ""' "$profile"); valid_sha "$theme_sha" || theme_sha=""
 
   local current_theme=""
-  [[ -f $HOME/.local/state/omarchy/current/theme.name ]] && current_theme=$(<"$HOME/.local/state/omarchy/current/theme.name")
-  current_theme="${current_theme//[[:space:]]/}"
+  current_theme=$(active_theme_name || true)
   [[ $theme_name == "$current_theme" ]] && theme_name=""
 
   # A theme repo is code the shell sources on every reload, so the pin rule that
@@ -3477,6 +4520,297 @@ cmd_apply() {
   printf '\n%sLoadout applied.%s Your dotfiles and your home directory were not touched.\n' "$c_bold" "$c_reset"
 }
 
+definitions_compatible() {
+  local kind="$1" existing="$2" requested="$3"
+  if [[ $kind == plugin || $kind == theme-install ]] && [[ -z $(jq -r '.commit // ""' <<<"$requested") ]]; then
+    jq -e --argjson other "$requested" 'del(.commit) == ($other | del(.commit))' <<<"$existing" >/dev/null
+  else
+    jq -e --argjson other "$requested" '. == $other' <<<"$existing" >/dev/null
+  fi
+}
+
+build_apply_plan() {
+  local profile="$1" loadout_id="$2" resources item rid kind definition existing observation
+  local action first cleanup claim_status registry_resource requested note existing_channels requested_channels plan='[]'
+  resources=$(profile_resources_json "$profile" "$loadout_id")
+  while IFS= read -r item; do
+    rid=$(jq -r '.id' <<<"$item"); kind=$(jq -r '.kind' <<<"$item")
+    definition=$(jq -c '.definition' <<<"$item"); requested=$(jq -c '.requested' <<<"$item")
+    existing=$(jq -c --arg id "$rid" '.resources[] | select(.id == $id)' <<<"$REGISTRY")
+    action=""; first="unknown"; cleanup="unknown"; claim_status="pending"; note=""
+    if [[ -n $existing ]]; then
+      registry_resource="$existing"
+      observation=$(resource_inspect_json "$existing")
+      if definitions_compatible "$kind" "$(jq -c '.definition' <<<"$existing")" "$definition"; then
+        case "$(jq -r '.state' <<<"$observation")" in
+          present) action="share"; claim_status="healthy" ;;
+          missing) action="defer"; claim_status="pending" ;;
+          *) action="conflict"; claim_status="conflicting" ;;
+        esac
+        if [[ $kind == package ]]; then
+          existing_channels=$(jq -c --arg rid "$rid" '[.claims[] | select(.resourceId == $rid) | .requested.channels[]?] | unique' <<<"$REGISTRY")
+          requested_channels=$(jq -c '.channels | unique' <<<"$requested")
+          [[ $existing_channels == "$requested_channels" ]] ||
+            note="package channel differs from an existing claim; package presence is name-based"
+        fi
+      else
+        action="conflict"; claim_status="conflicting"
+      fi
+      first=$(jq -r '.firstObserved' <<<"$existing")
+      cleanup=$(jq -r '.cleanupPolicy' <<<"$existing")
+    else
+      observation=$(resource_inspect_json "$item")
+      case "$(jq -r '.state' <<<"$observation")" in
+        present)
+          action="protect"; first="present"; cleanup="retain"; claim_status="healthy" ;;
+        missing)
+          first="absent"; cleanup="remove"; claim_status="pending"
+          [[ $kind == theme-active ]] && action="activate" || action="install"
+          ;;
+        *)
+          action="conflict"; first="unknown"; cleanup="unknown"; claim_status="conflicting" ;;
+      esac
+      registry_resource=$(jq -nc --argjson item "$item" --arg first "$first" --arg cleanup "$cleanup" \
+        --argjson observation "$observation" '
+        $item | {id,kind,name,definition} + {firstObserved:$first,cleanupPolicy:$cleanup,
+          state:$observation.state,evidence:$observation.evidence}')
+    fi
+    if [[ $action == install && ( $kind == plugin || $kind == theme-install ) ]] &&
+      [[ -n $(jq -r '.url // ""' <<<"$definition") && -z $(jq -r '.commit // ""' <<<"$definition") ]] &&
+      (( ! ALLOW_UNPINNED )); then
+      action="refuse"; claim_status="deferred"
+      registry_resource=$(jq -c '.cleanupPolicy = "unknown" | .state = "uncertain"' <<<"$registry_resource")
+    fi
+    plan=$(jq -c --argjson item "$item" --argjson resource "$registry_resource" \
+      --argjson observation "$observation" --arg action "$action" --arg status "$claim_status" \
+      --arg note "$note" \
+      '. + [{item:$item,resource:$resource,observation:$observation,action:$action,claimStatus:$status,note:$note}]' <<<"$plan")
+  done < <(jq -c '.[]' <<<"$resources")
+  printf '%s' "$plan"
+}
+
+registry_register_apply_plan() {
+  local id="$1" source="$2" digest="$3" profile="$4" plan="$5" now precedence baseline actions next
+  now=$(date -u +%s)
+  precedence=$(jq '[.loadouts[].precedence] | max // 0 | . + 1' <<<"$REGISTRY")
+  baseline=$(active_theme_name || true)
+  actions=$(jq -c '[.[] | select(.action == "install" or .action == "activate") |
+    {resourceId:.item.id,state:"planned"}]' <<<"$plan")
+  next=$(jq -c --arg id "$id" --arg source "$source" --arg digest "$digest" \
+    --argjson profile "$(<"$profile")" --argjson plan "$plan" --argjson now "$now" \
+    --argjson precedence "$precedence" --arg baseline "$baseline" --argjson actions "$actions" '
+    if .baseline.activeTheme == null and any($plan[]; .item.kind == "theme-active")
+      then .baseline.activeTheme = $baseline else . end |
+    .loadouts += [{id:$id,name:$profile.name,author:$profile.author,description:$profile.description,
+      source:$source,digest:$digest,profile:$profile,appliedAt:$now,updatedAt:$now,
+      precedence:$precedence,state:(if any($plan[]; .claimStatus == "conflicting") then "conflicting"
+        elif any($plan[]; .claimStatus != "healthy") then "pending" else "healthy" end)}] |
+    reduce $plan[] as $p (.;
+      if any(.resources[]; .id == $p.resource.id) then . else .resources += [$p.resource] end |
+      .claims += [{loadoutId:$id,resourceId:$p.resource.id,requested:($p.item.definition + $p.item.requested),
+        status:$p.claimStatus,lastError:(if $p.claimStatus == "conflicting" then "incompatible or changed resource" else "" end)}]) |
+    .operation = {kind:"apply",target:$id,phase:"planned",actions:$actions}
+  ' <<<"$REGISTRY")
+  registry_save "$next"
+}
+
+registry_set_claim_result() {
+  local loadout="$1" resource="$2" claim_state="$3" observed_state="$4" evidence="$5" error="${6:-}" action_state="done" next
+  [[ $claim_state == healthy ]] || action_state=$claim_state
+  case "$action_state" in pending|deferred) action_state="skipped";; conflicting) action_state="failed";; esac
+  next=$(jq -c --arg loadout "$loadout" --arg resource "$resource" --arg claim "$claim_state" \
+    --arg observed "$observed_state" --argjson evidence "$evidence" --arg error "$error" --arg action "$action_state" '
+    .claims |= map(if .loadoutId == $loadout and .resourceId == $resource
+      then .status = $claim | .lastError = $error else . end) |
+    .resources |= map(if .id == $resource then .state = $observed | .evidence = $evidence else . end) |
+    if .operation != null then .operation.phase = "running" |
+      .operation.actions |= map(if .resourceId == $resource then .state = $action else . end)
+    else . end
+  ' <<<"$REGISTRY")
+  # Derive the target lifecycle from all of its claims after the relation update.
+  next=$(jq -c --arg id "$loadout" '
+    . as $root | .loadouts |= map(if .id == $id then
+      .state = (if any($root.claims[]; .loadoutId == $id and .status == "conflicting") then "conflicting"
+        elif any($root.claims[]; .loadoutId == $id and .status != "healthy") then "pending"
+        else "healthy" end) else . end)
+  ' <<<"$next")
+  registry_save "$next"
+}
+
+apply_one_resource() {
+  local loadout="$1" item="$2" category="${3:-apply}" rid kind name definition observation state evidence error=""
+  rid=$(jq -r '.id' <<<"$item"); kind=$(jq -r '.kind' <<<"$item"); name=$(jq -r '.name' <<<"$item")
+  definition=$(jq -c '.definition' <<<"$item")
+  registry_action_state "$rid" running
+  case "$kind" in
+    plugin)
+      local purl psha
+      purl=$(jq -r '.url' <<<"$definition"); psha=$(jq -r '.commit' <<<"$definition")
+      if clone_pinned "$purl" "$HOME/.config/omarchy/plugins/$name" "$psha" &&
+        omarchy plugin validate "$HOME/.config/omarchy/plugins/$name" >/dev/null 2>&1; then
+        if [[ -z $psha ]]; then
+          psha=$(git -C "$HOME/.config/omarchy/plugins/$name" rev-parse HEAD 2>/dev/null || true)
+          if valid_sha "$psha"; then
+            REGISTRY=$(jq -c --arg rid "$rid" --arg sha "$psha" '
+              .resources |= map(if .id == $rid then .definition.commit = $sha else . end)' <<<"$REGISTRY")
+          fi
+        fi
+        omarchy-shell shell ping >/dev/null 2>&1 && omarchy plugin enable "$name" >/dev/null 2>&1 || true
+      else error="could not install plugin $name"; rm -rf "$HOME/.config/omarchy/plugins/$name"; fi
+      ;;
+    webapp)
+      local wurl wicon
+      wurl=$(jq -r '.url' <<<"$definition"); wicon=$(jq -r '.icon' <<<"$definition")
+      omarchy webapp install "$name" "$wurl" "${wicon:-$wurl}" >/dev/null 2>&1 || error="could not add web app $name"
+      ;;
+    theme-install)
+      local turl tsha
+      turl=$(jq -r '.url' <<<"$definition"); tsha=$(jq -r '.commit' <<<"$definition")
+      if [[ -n $turl ]]; then
+        clone_pinned "$turl" "$HOME/.config/omarchy/themes/$name" "$tsha" || error="could not install theme $name"
+      elif [[ ! -d $HOME/.config/omarchy/themes/$name && ! -d $OMARCHY_DIR/themes/$name ]]; then
+        error="theme $name is unavailable"
+      fi
+      ;;
+    theme-active)
+      omarchy theme set "$name" >/dev/null 2>&1 || error="could not activate theme $name"
+      ;;
+  esac
+  observation=$(resource_inspect_json "$(jq -c --arg id "$rid" '.resources[] | select(.id == $id)' <<<"$REGISTRY")")
+  state=$(jq -r '.state' <<<"$observation"); evidence=$(jq -c '.evidence' <<<"$observation")
+  if [[ -z $error && $state == present ]]; then
+    registry_set_claim_result "$loadout" "$rid" healthy present "$evidence"
+    step_ok "$category" "$kind $name"
+  else
+    [[ -n $error ]] || error="$kind $name is $state after installation"
+    registry_set_claim_result "$loadout" "$rid" failed "$state" "$evidence" "$error"
+    step_warn "$category" "$error"
+  fi
+}
+
+cmd_apply() {
+  local source="${1:-}"
+  [[ -n $source ]] || die "usage: ress apply <ress.sh/gh/user/repo | git-url | profile.json>"
+  source=$(normalize_source "$source"); shift || true
+  while (( $# )); do case "$1" in --restart) shift;; *) die "unknown apply option: $1";; esac; done
+
+  take_lock
+  APPLY_WORK=$(mktemp -d)
+  step_start apply "Fetching the loadout"
+  fetch_profile "$source" "$APPLY_WORK"
+  local profile="$APPLY_WORK/normalized.json"
+  normalize_profile "$APPLY_WORK/profile.json" "$profile"
+  (( NORMALIZE_REFUSED_PACKAGES == 0 )) ||
+    step_warn apply "refused $NORMALIZE_REFUSED_PACKAGES unsafe package names from this loadout"
+  (( NORMALIZE_REFUSED_INTEGRATIONS == 0 )) ||
+    step_warn apply "refused $NORMALIZE_REFUSED_INTEGRATIONS unsafe integration entries from this loadout"
+  registry_load
+  local digest id existing_id same_source plan name author
+  digest=$(profile_digest "$profile")
+  existing_id=$(jq -r --arg digest "$digest" '.loadouts[] | select(.digest == $digest) | .id' <<<"$REGISTRY" | head -1)
+  source=$(strip_credentials "$source")
+  if [[ -n $existing_id ]]; then
+    step_ok apply "already tracked as $existing_id"
+    if (( DRY_RUN )); then emit "DONE|ok|exact loadout dry run complete"; (( PORCELAIN )) || printf '\n%sDry run — nothing was changed.%s\n' "$c_dim" "$c_reset"; return 0; fi
+    cmd_loadout_mutation repair "$existing_id"
+    return $?
+  fi
+  same_source=$(jq -r --arg source "$source" '.loadouts[] | select(.source == $source) | .id' <<<"$REGISTRY" | head -1)
+  [[ -z $same_source ]] || die "this source has changed since $same_source was applied — use: ress loadout update $same_source $(printf '%q' "$source")"
+  name=$(jq -r '.name' "$profile"); author=$(jq -r '.author' "$profile")
+  id=$(loadout_local_id "$name" "$digest")
+  plan=$(build_apply_plan "$profile" "$id")
+  step_ok apply "$name by $author (local id: $id)"
+
+  local preview_native preview_aur
+  preview_native=$(jq '[.[] | select(.action == "install" and .item.kind == "package" and (.item.requested.channels | index("native")))] | length' <<<"$plan")
+  preview_aur=$(jq '[.[] | select(.action == "install" and .item.kind == "package" and ((.item.requested.channels | index("native")) == null))] | length' <<<"$plan")
+  if (( PORCELAIN )); then
+    while IFS= read -r entry; do emit "LOG|plan: $(jq -r '.action|ascii_upcase' <<<"$entry") $(jq -r '.item.id' <<<"$entry")$(jq -r 'if .note == "" then "" else " (" + .note + ")" end' <<<"$entry")"; done < <(jq -c '.[]' <<<"$plan")
+  else
+    printf '\n%sThis will install or track:%s\n\n' "$c_bold" "$c_reset"
+    (( preview_native == 0 )) || printf '  %s%s from the Arch repos%s\n' "$c_green" "$(plural "$preview_native" package)" "$c_reset"
+    (( preview_aur == 0 )) || printf '  %s%s from the AUR%s %s(built here from a PKGBUILD; asked about separately)%s\n' \
+      "$c_yellow" "$(plural "$preview_aur" package)" "$c_reset" "$c_dim" "$c_reset"
+    jq -r '.[] | "  " + (.action | ascii_upcase) + "  " + .item.id +
+      (if .action == "protect" then " (already present; will be retained)"
+       elif .action == "share" then " (shared with another loadout)"
+       elif .action == "conflict" then " (requires resolution)"
+       elif .action == "refuse" then " (names no commit; pass --allow-unpinned to install)"
+       elif .action == "defer" then " (currently missing; repair separately)" else "" end) +
+      (if .note != "" then " (" + .note + ")" else "" end)' <<<"$plan"
+    printf '\n%sThis will not:%s touch dotfiles, run profile scripts, or remove unrelated state.\n\n' "$c_bold" "$c_reset"
+  fi
+  if (( DRY_RUN )); then
+    emit "DONE|ok|apply dry run complete"
+    (( PORCELAIN )) || printf '%sDry run — nothing was installed. Nothing was tracked.%s\n' "$c_dim" "$c_reset"
+    return 0
+  fi
+  confirm "Apply and track this loadout?" || die "cancelled"
+
+  registry_register_apply_plan "$id" "$source" "$digest" "$profile" "$plan"
+
+  local native=() aur=() entry rid pkg observation evidence
+  while IFS= read -r entry; do
+    [[ $(jq -r '.action' <<<"$entry") == install && $(jq -r '.item.kind' <<<"$entry") == package ]] || continue
+    pkg=$(jq -r '.item.name' <<<"$entry")
+    if jq -e '.item.requested.channels | index("native")' <<<"$entry" >/dev/null; then native+=("$pkg"); else aur+=("$pkg"); fi
+  done < <(jq -c 'sort_by(if .item.kind == "theme-active" then 1 else 0 end)[]' <<<"$plan")
+
+  if (( ${#native[@]} )); then
+    for pkg in "${native[@]}"; do registry_action_state "package:$pkg" running; done
+    if sudo pacman -S --needed --noconfirm -- "${native[@]}"; then
+      for pkg in "${native[@]}"; do
+        observation=$(resource_inspect_json "$(jq -c --arg id "package:$pkg" '.resources[] | select(.id == $id)' <<<"$REGISTRY")")
+        evidence=$(jq -c '.evidence' <<<"$observation")
+        registry_set_claim_result "$id" "package:$pkg" healthy present "$evidence"
+      done
+      step_ok apply "repo packages installed"
+    else
+      for pkg in "${native[@]}"; do
+        observation=$(resource_inspect_json "$(jq -c --arg id "package:$pkg" '.resources[] | select(.id == $id)' <<<"$REGISTRY")")
+        if [[ $(jq -r '.state' <<<"$observation") == present ]]; then
+          registry_set_claim_result "$id" "package:$pkg" healthy present "$(jq -c '.evidence' <<<"$observation")"
+        else registry_set_claim_result "$id" "package:$pkg" failed missing '{}' "package install failed"; fi
+      done
+      step_warn apply "some repo packages failed"
+    fi
+  fi
+
+  if (( ${#aur[@]} )); then
+    aur_gate apply "${aur[@]}"
+    if [[ $AUR_MODE != skip ]] && have yay && aur_install apply "${AUR_KEPT[@]}"; then
+      for pkg in "${aur[@]}"; do
+        observation=$(resource_inspect_json "$(jq -c --arg id "package:$pkg" '.resources[] | select(.id == $id)' <<<"$REGISTRY")")
+        if [[ $(jq -r '.state' <<<"$observation") == present ]]; then
+          registry_set_claim_result "$id" "package:$pkg" healthy present "$(jq -c '.evidence' <<<"$observation")"
+        else registry_set_claim_result "$id" "package:$pkg" failed missing '{}' "AUR package was not installed"; fi
+      done
+    else
+      for pkg in "${aur[@]}"; do registry_set_claim_result "$id" "package:$pkg" deferred missing '{}' "AUR build left for later"; done
+    fi
+  fi
+
+  while IFS= read -r entry; do
+    case "$(jq -r '.action' <<<"$entry")" in
+      install|activate)
+        [[ $(jq -r '.item.kind' <<<"$entry") == package ]] || apply_one_resource "$id" "$(jq -c '.item' <<<"$entry")"
+        ;;
+    esac
+  done < <(jq -c 'sort_by(if .item.kind == "theme-active" then 1 else 0 end)[]' <<<"$plan")
+
+  registry_finish_operation
+  local final; final=$(jq -r --arg id "$id" '.loadouts[] | select(.id == $id) | .state' <<<"$REGISTRY")
+  if [[ $final == healthy ]]; then
+    emit "DONE|ok|apply complete"
+    (( PORCELAIN )) || printf '\n%sLoadout applied and tracked as %s.%s\n' "$c_bold" "$id" "$c_reset"
+    return 0
+  fi
+  emit "DONE|partial|apply finished with unresolved resources"
+  (( PORCELAIN )) || printf '\n%sLoadout tracked as %s with state: %s.%s Run: ress loadout check %s\n' "$c_yellow" "$id" "$final" "$c_reset" "$id"
+  return 1
+}
+
 # ==================================================================== USAGE
 
 usage() {
@@ -3498,6 +4832,11 @@ ${c_bold}ress${c_reset} $VERSION — capture an Omarchy machine, replay it onto 
 
   ${c_bold}ress apply${c_reset} <git-url> [--dry-run]
       Install someone else's loadout. Shows the full list and asks first.
+
+  ${c_bold}ress loadout${c_reset} <list|show|check|repair|update|remove> ...
+      Inspect and manage the loadouts tracked on this machine.
+  ${c_bold}ress resource${c_reset} <list|show> ...
+      Inspect loadout resource provenance, health and claimants.
 
   ${c_bold}ress verify${c_reset} [--json]      Check this machine against the vault, and
                             exit non-zero if it does not match.
@@ -3558,6 +4897,8 @@ case "$command" in
   restore) cmd_restore "$@" ;;
   share)   cmd_share "$@" ;;
   apply)   cmd_apply "$@" ;;
+  loadout) cmd_loadout "$@" ;;
+  resource) cmd_resource "$@" ;;
   status)  cmd_status "$@" ;;
   diff)    cmd_diff "$@" ;;
   init)    cmd_init "$@" ;;

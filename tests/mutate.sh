@@ -292,6 +292,49 @@ run_mutation status-manifest-unchecked \
   '  if jq -e . "$file" >/dev/null 2>&1; then jq -c . "$file"; else printf '"'"'null'"'"'; fi' \
   '  cat "$file" 2>/dev/null || printf '"'"'null'"'"''
 
+# ---- applied-loadout lifecycle -------------------------------------------
+
+run_mutation loadout-registry-schema-ignored \
+  '    (.schemaVersion == 1) and (.revision | integer and . >= 0) and' \
+  '    true and (.revision | integer and . >= 0) and'
+
+run_mutation loadout-new-fabricated-claim-accepted \
+  '    jq -e --arg id "$loadout_id" '\''any(.loadouts[]; .id == $id)'\'' "$file" >/dev/null || return 1' \
+  '    :'
+
+run_mutation loadout-isolation-path-name-accepted \
+  '      package) valid_pkg "$name" && [[ $id == "package:$name" ]] || return 1 ;;' \
+  '      package) : ;;'
+
+run_mutation loadout-preexisting-gains-ownership \
+  '          action="protect"; first="present"; cleanup="retain"; claim_status="healthy" ;;' \
+  '          action="protect"; first="absent"; cleanup="remove"; claim_status="healthy" ;;'
+
+run_mutation loadout-isolation-conflicts-compatible \
+  'definitions_compatible() {' \
+  'definitions_compatible() { return 0; #'
+
+run_mutation loadout-shared-resource-deleted \
+  '  if (( others > 0 )) || [[ $cleanup == retain || $state == missing ]]; then' \
+  '  if (( 0 )) || [[ $cleanup == retain || $state == missing ]]; then'
+
+run_mutation loadout-modified-resource-deleted \
+  '  elif [[ $state == present && $cleanup == remove ]]; then' \
+  '  elif [[ ( $state == present || $state == modified ) && $cleanup == remove ]]; then'
+
+run_mutation loadout-package-removal-cascades \
+  'sudo pacman -R --noconfirm -- "$name"' \
+  'sudo pacman -R --cascade --noconfirm -- "$name"'
+
+run_mutation loadout-partial-apply-says-ok \
+  '  if [[ $final == healthy ]]; then' \
+  '  if [[ $final != healthy ]]; then'
+
+run_mutation loadout-new-check-implicitly-repairs \
+  '      result=$(loadout_check_json "$id")' \
+  '      ASSUME_YES=1; repair_loadout "$id" >/dev/null 2>&1 || true
+      result=$(loadout_check_json "$id")'
+
 # ---- the protocol ---------------------------------------------------------
 
 run_mutation porcelain-prose \

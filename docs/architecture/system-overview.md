@@ -6,19 +6,19 @@ ress is a Bash CLI with a small QML panel and headless scheduling service. The C
 
 ### `bin/ress`
 
-The CLI implements capture, restore, loadout sharing/application, verification, credential scanning, configuration, status, and supporting commands. It owns input validation, consent gates, locking, persistent progress, vault formats, and consumer output.
+The CLI implements capture, restore, loadout sharing/application and lifecycle management, verification, credential scanning, configuration, status, and supporting commands. It owns input validation, resource inspection, consent gates, locking, persistent progress, vault and registry formats, cleanup adapters, and consumer output.
 
 The CLI is the only component that reads or writes the vault as product state. Human output explains decisions; JSON and porcelain output serve automation and the panel.
 
 ### `Service.qml`
 
-The service wraps CLI processes for the shell. A panel-owned instance refreshes `ress status --json`, launches backup/share with `--porcelain`, parses protocol records through `Model.js`, and exposes UI state. A headless instance schedules backups from CLI-owned config and state stamps.
+The service wraps CLI processes for the shell. A panel-owned instance refreshes `ress status --json`, stored inventory through `ress loadout list --json --contents`, and live resource health through `ress loadout check --json`; it merges only validated CLI records by stable loadout id. It launches backup/share with `--porcelain` and exposes UI state. A headless instance schedules backups from CLI-owned config and state stamps.
 
 It watches config and state files to know when to refresh presentation, but it does not inspect vault contents or implement restore logic.
 
 ### `Panel.qml`
 
-The panel renders backup freshness, captured categories, progress, consent settings, and share/apply entry points. Backup and share can run in-panel through the CLI protocol. Restore and loadout apply open an interactive terminal because they may need privilege, review, or confirmation.
+The panel renders backup freshness, captured categories, progress, consent settings, sharing, and an applied-loadout inventory. Backup and share can run in-panel through the CLI protocol. Restore plus loadout apply, update, repair, and removal open an interactive terminal because they may need privilege, destructive review, or independent consent.
 
 ### `Model.js`
 
@@ -36,6 +36,7 @@ The model contains presentation-only helpers: freshness and relative-time labels
 | `~/.local/share/ress/profile` | CLI | Default exported loadout repository |
 | `~/.config/ress/config` | CLI; watched by QML | User settings and category choices |
 | `~/.config/ress/include`, `exclude`, `aur-deny`, `secrets` | CLI | User extensions to curated policy lists |
+| `~/.local/state/ress/loadouts.json` | CLI; queried through CLI by QML | Applied-loadout snapshots, resource provenance, claims, and operation journal |
 | `~/.local/state/ress/` | CLI; selected stamps watched by QML | Last success/attempt, operation lock marker, restore progress, local scan findings |
 
 The exact vault and profile formats are defined in [contracts](../contracts/).
@@ -59,7 +60,7 @@ The exact vault and profile formats are defined in [contracts](../contracts/).
 
 ### Loadout
 
-`ress share` creates a fixed-schema `profile.json`. `ress apply` resolves the source, validates the profile, previews the four supported action types, confirms, and performs only missing actions. The panel hands preview/apply to a terminal rather than parsing the profile itself.
+`ress share` creates a fixed-schema `profile.json`. `ress apply` resolves and normalizes the source, plans compatible/shared/conflicting resources, confirms, records desired state and a journal before mutation, and records each outcome. Exact reapply reconciles the same local loadout; changed known-source content requires explicit update. Check is read-only, repair is explicit, and removal withdraws claims using provenance and current evidence. The panel consumes CLI JSON and hands mutations to a terminal.
 
 ## External tools
 
@@ -72,6 +73,7 @@ The CLI composes existing Omarchy and Arch tools including Git, `jq`, `rsync`, `
 - **User services cross a persistence boundary.** Enabling a service schedules future execution, so candidates and executable commands are shown before a separate decision.
 - **Secrets cross a confidentiality boundary.** Ordinary capture excludes credential paths; the opt-in secrets path encrypts before storage and restores private permissions.
 - **The panel crosses a consumer boundary.** It receives JSON or porcelain output from the CLI and must tolerate invalid output without inventing state.
+- **The registry crosses a deletion-authority boundary.** It is local but hand-editable, so every mutation validates all identities and relations and reconstructs rather than trusts deletion targets.
 - **Remote Git state crosses a network boundary.** Restorable shared code requires safe remotes and recorded commits unless the user explicitly accepts an unpinned head.
 
 ## Verification boundary

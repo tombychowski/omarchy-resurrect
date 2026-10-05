@@ -30,9 +30,11 @@ The panel-owned service runs:
 
 ```text
 <plugin>/bin/ress status --json
+<plugin>/bin/ress loadout list --json --contents
+<plugin>/bin/ress loadout check --json
 ```
 
-It collects stdout to completion and then parses one JSON object. A parse failure sets `status` to `null`; no QML code falls back to reading the vault.
+It collects stdout to completion and then parses one JSON object from each command. Stored inventory/content and live check results are validated independently and merged only by stable loadout identity. A non-zero check exit is expected when drift exists, so valid JSON still drives the panel. A parse failure or unmatched identity makes loadout state unavailable; no QML code falls back to reading the vault or loadout registry.
 
 Status provides manifest counts and configured state. Freshness and relative age use the CLI-owned `last-backup` timestamp watched from `~/.local/state/ress/`. The panel also watches:
 
@@ -55,15 +57,18 @@ Unknown or human prose lines return `null` and are ignored. Embedded pipes are r
 
 When the worker exits, the service clears busy progress, records stderr or a fallback exit-code error when needed, emits `finished(action, state)`, and refreshes status. The panel translates successful backup/share completion into brief notices and other terminal states into “finished with problems”; detailed failures remain available from the CLI message/error.
 
-## Restore and apply terminal handoff
+## Restore and loadout terminal handoff
 
 The panel does not run restore or loadout apply inside the background worker.
 
 - Restore launches `omarchy-launch-terminal <cli> restore` and closes the panel.
 - Loadout preview launches `omarchy-launch-terminal <cli> apply --dry-run -- <url>`.
 - Loadout apply launches `omarchy-launch-terminal <cli> apply -- <url>` and closes the panel.
+- Update launches `omarchy-launch-terminal <cli> loadout update <id>`.
+- Repair launches `omarchy-launch-terminal <cli> loadout repair <id>`.
+- Removal launches `omarchy-launch-terminal <cli> loadout remove <id>`.
 
-The `--` boundary prevents a pasted source beginning with `-` from becoming an option. The terminal keeps preview, `sudo`, AUR review, and service consent visible and interactive.
+Commands are argument arrays and pasted sources follow a `--` boundary. The terminal keeps preview, `sudo`, AUR review, modified-resource decisions, destructive confirmation, and service consent visible and interactive. QML never deletes a resource or silently supplies `--yes`.
 
 ## Settings dispatch
 
@@ -95,7 +100,7 @@ The panel-owned instance never starts the headless timer. It only displays `exte
 
 ## Verification
 
-- `tests/model-test.js` verifies parsing, freshness, consent language, credential stripping, and category metadata.
+- `tests/model-test.js` verifies parsing, freshness, consent language, loadout lifecycle/resource-health language, malformed handling, credential stripping, and category metadata.
 - `tests/cases/12-porcelain.sh` verifies CLI stdout contains only defined records and reports deferred/failed work.
 - `tests/cases/16-qml.sh` runs model tests, QML lint when available, and cross-checks every `engine.<member>` reference against `Service.qml`.
 - A clean Omarchy VM remains required to verify rendering, focus, bar mounting, clicks, and terminal handoff end to end.

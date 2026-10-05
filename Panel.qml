@@ -33,20 +33,32 @@ Panel {
   property int cursor: 0
   property bool cursorActive: false
   property string applyUrl: ""
+  property string selectedLoadoutId: ""
   property string notice: ""
 
-  readonly property var tabs: ["backup", "share", "apply"]
+  readonly property var tabs: ["backup", "share", "loadouts"]
   readonly property var rows: {
     if (tab === "share") return [
       { id: "share",  label: "Export loadout" },
       { id: "copy",   label: "Copy the share command" },
       { id: "folder", label: "Open the profile folder" }
     ]
-    if (tab === "apply") return [
-      { id: "url",    label: "Profile URL" },
-      { id: "preview", label: "Preview what it installs" },
-      { id: "apply",  label: "Apply this loadout" }
-    ]
+    if (tab === "loadouts") {
+      var loadoutRows = [
+        { id: "url", label: "Profile URL" },
+        { id: "preview", label: "Preview what it installs" },
+        { id: "apply", label: "Apply another loadout" }
+      ]
+      var applied = engine.loadouts || []
+      for (var l = 0; l < applied.length; l++)
+        loadoutRows.push({ id: "loadout:" + applied[l].id, label: applied[l].name })
+      if (selectedLoadoutId !== "") {
+        loadoutRows.push({ id: "loadout-update", label: "Update selected loadout" })
+        loadoutRows.push({ id: "loadout-repair", label: "Repair selected loadout" })
+        loadoutRows.push({ id: "loadout-remove", label: "Remove selected loadout" })
+      }
+      return loadoutRows
+    }
     var out = [{ id: "backup", label: "Back up now" }, { id: "restore", label: "Restore this machine" }]
     for (var i = 0; i < Model.CATEGORIES.length; i++)
       out.push({ id: "cat:" + Model.CATEGORIES[i].key, label: Model.CATEGORIES[i].label })
@@ -60,6 +72,13 @@ Panel {
     ? rows[cursor].id : ""
 
   function hasCursor(id) { return currentRowId === id }
+
+  function selectedLoadout() {
+    var applied = engine.loadouts || []
+    for (var i = 0; i < applied.length; i++)
+      if (applied[i].id === selectedLoadoutId) return applied[i]
+    return null
+  }
 
   // -------------------------------------------------------------- behaviour
 
@@ -83,6 +102,10 @@ Panel {
     if (id.indexOf("cat:") === 0) {
       var key = id.substring(4)
       engine.setCategory(key, !engine.categoryEnabled(key))
+      return
+    }
+    if (id.indexOf("loadout:") === 0) {
+      selectedLoadoutId = id.substring(8)
       return
     }
     switch (id) {
@@ -119,13 +142,23 @@ Panel {
         break
       case "preview":
         if (applyUrl === "") { flash("Paste a profile URL first"); break }
-        // `--` last: a pasted URL is user input, and end-of-options is what
-        // stops one that starts with a dash from arriving as a flag.
-        Quickshell.execDetached(["omarchy-launch-terminal", engine.cli, "apply", "--dry-run", "--", applyUrl])
+        engine.openApply(applyUrl, true)
         break
       case "apply":
         if (applyUrl === "") { flash("Paste a profile URL first"); break }
-        Quickshell.execDetached(["omarchy-launch-terminal", engine.cli, "apply", "--", applyUrl])
+        engine.openApply(applyUrl, false)
+        root.close()
+        break
+      case "loadout-update":
+        engine.openLoadoutAction("update", selectedLoadoutId, "")
+        root.close()
+        break
+      case "loadout-repair":
+        engine.openLoadoutAction("repair", selectedLoadoutId, "")
+        root.close()
+        break
+      case "loadout-remove":
+        engine.openLoadoutAction("remove", selectedLoadoutId, "")
         root.close()
         break
     }
@@ -259,7 +292,7 @@ Panel {
         if (key === "b") root.trigger("backup")
         else if (key === "r") root.trigger("restore")
         else if (key === "s") { root.tab = "share"; root.cursor = 0 }
-        else if (key === "a") { root.tab = "apply"; root.cursor = 0 }
+        else if (key === "a" || key === "l") { root.tab = "loadouts"; root.cursor = 0 }
         else if (key === "?") root.tab = "backup"
       }
 
@@ -515,15 +548,16 @@ Panel {
             }
           }
 
-          // ----------------------------------------------------- apply tab
+          // -------------------------------------------------- loadouts tab
           Column {
-            visible: root.tab === "apply"
+            visible: root.tab === "loadouts"
             width: parent.width
             spacing: Style.space(10)
 
             Text {
               width: parent.width
-              text: "Paste a ress.sh link or a GitHub URL. Nothing is installed "
+              text: "Applied loadouts are desired state on this machine. Paste a ress.sh link "
+                + "or a GitHub URL to add another. Nothing is installed "
                 + "until you have seen the full list: apply only ever installs "
                 + "packages, adds plugins, adds web apps and sets a theme. "
                 + "A profile cannot carry a script."
@@ -561,6 +595,92 @@ Panel {
               glyph: ""
               title: "Apply this loadout"
               subtitle: "asks again before the first package"
+            }
+
+            PanelSeparator { foreground: root.foreground }
+
+            Text {
+              width: parent.width
+              text: !engine.loadoutsAvailable
+                ? (engine.loadingLoadouts ? "Loading applied loadouts…" : "Applied loadouts are unavailable")
+                : Model.plural((engine.loadouts || []).length, "applied loadout")
+              color: engine.loadoutsAvailable ? root.foreground : root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Repeater {
+              model: engine.loadouts || []
+              ActionRow {
+                required property var modelData
+                width: parent.width
+                rowId: "loadout:" + modelData.id
+                glyph: modelData.attentionCount > 0 ? "" : ""
+                title: modelData.name
+                subtitle: Model.loadoutState(modelData.state) + " · "
+                  + Model.plural(modelData.resourceCount, "resource")
+                  + (modelData.attentionCount > 0 ? " · " + modelData.attentionCount + " need attention" : "")
+              }
+            }
+
+            Column {
+              visible: root.selectedLoadout() !== null
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                width: parent.width
+                text: {
+                  var item = root.selectedLoadout()
+                  return item ? (item.name + " by " + item.author + "\n" + item.id + "\n" + item.source) : ""
+                }
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WrapAnywhere
+              }
+              Text {
+                width: parent.width
+                text: {
+                  var item = root.selectedLoadout()
+                  return item ? Model.summarizeLoadoutContent(item.profile) : ""
+                }
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+              Text {
+                width: parent.width
+                text: {
+                  var item = root.selectedLoadout()
+                  return item ? Model.loadoutContentNames(item.profile) : ""
+                }
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Repeater {
+                model: {
+                  var item = root.selectedLoadout()
+                  return item && item.resources ? item.resources : []
+                }
+                Text {
+                  required property var modelData
+                  width: parent.width
+                  text: Model.resourceHealth(modelData.healthState) !== "healthy"
+                    ? "⚠ " + modelData.healthState + " · " + modelData.id
+                    : modelData.healthState + " · " + modelData.id
+                  color: Model.resourceHealth(modelData.healthState) === "healthy" ? root.dim : root.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WrapAnywhere
+                }
+              }
+              ActionRow { width: parent.width; rowId: "loadout-update"; glyph: ""; title: "Update"; subtitle: "fetch and review changed content in a terminal" }
+              ActionRow { width: parent.width; rowId: "loadout-repair"; glyph: ""; title: "Repair"; subtitle: "reinstall missing resources after review" }
+              ActionRow { width: parent.width; rowId: "loadout-remove"; glyph: ""; title: "Remove loadout"; subtitle: "review cleanup and retention in a terminal" }
             }
           }
         }

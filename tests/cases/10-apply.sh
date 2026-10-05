@@ -50,7 +50,8 @@ assert_not_called "pacman -S --needed"
 # ---- 3. accepting the loadout still asks about the AUR separately ---------
 
 ress_answer "y" "n" -- apply "$PROFILE"
-assert_ok "apply, AUR declined"
+assert_fails "apply records a partial result when AUR work is declined"
+assert_output "state: pending"
 assert_called "pacman -S --needed --noconfirm -- fd ripgrep" "repo packages install"
 assert_not_called "yay -S" "the AUR question is asked on its own, and was answered no"
 assert_output "PKGBUILD fetched from aur.archlinux.org"
@@ -72,6 +73,10 @@ assert_called "yay -S --needed --noconfirm --answerclean None --answerdiff None 
 
 # ---- 5. an unpinned loadout is refused unless asked for -------------------
 
+# The next scenarios exercise independent first applications. A changed profile
+# at the same source is now intentionally routed through `loadout update`.
+rm -f "$XDG_STATE_HOME/ress/loadouts.json"
+
 jq 'del(.plugins[0].commit) | del(.theme.commit)' "$PROFILE/profile.json" >"$PROFILE/unpinned.json"
 mv "$PROFILE/unpinned.json" "$PROFILE/profile.json"
 rm -rf "$HOME/.config/omarchy/plugins/acme.widget" "$HOME/.config/omarchy/themes/rose-pine"
@@ -88,6 +93,8 @@ assert_ok "with --allow-unpinned it is"
 assert_dir "$HOME/.config/omarchy/plugins/acme.widget"
 
 # ---- 6. a loadout cannot smuggle a command through a package name --------
+
+rm -f "$XDG_STATE_HOME/ress/loadouts.json"
 
 jq '.packages.native = ["--overwrite=/etc/passwd", "ripgrep"]' "$PROFILE/profile.json" >"$PROFILE/evil.json"
 mv "$PROFILE/evil.json" "$PROFILE/profile.json"

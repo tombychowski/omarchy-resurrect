@@ -70,3 +70,98 @@ function parseRecord(line) {
   }
   return null
 }
+
+var LOADOUT_STATES = ["healthy", "pending", "drifted", "conflicting", "removal-pending", "unavailable"]
+var RESOURCE_STATES = ["present", "missing", "modified", "conflicting", "protected", "pending", "failed", "uncertain", "unverifiable"]
+
+function loadoutState(state) {
+  switch (state) {
+    case "healthy": return "Healthy"
+    case "pending": return "Pending work"
+    case "drifted": return "Needs repair"
+    case "conflicting": return "Conflict"
+    case "removal-pending": return "Removal pending"
+    default: return "Unavailable"
+  }
+}
+
+function resourceHealth(state) {
+  if (state === "present" || state === "protected") return "healthy"
+  if (state === "missing" || state === "pending") return "attention"
+  if (state === "modified" || state === "conflicting" || state === "failed") return "warning"
+  return "unknown"
+}
+
+// Consumer validation stays deliberately small and strict. A malformed CLI
+// answer is unavailable state, never an invented empty/healthy dashboard.
+function parseLoadoutList(value) {
+  if (!value || !Array.isArray(value.loadouts)) return null
+  var out = []
+  for (var i = 0; i < value.loadouts.length; i++) {
+    var item = value.loadouts[i]
+    if (!item || typeof item.id !== "string" || typeof item.name !== "string" ||
+        LOADOUT_STATES.indexOf(item.state) < 0 ||
+        typeof item.resourceCount !== "number" || typeof item.attentionCount !== "number") return null
+    out.push(item)
+  }
+  return out
+}
+
+function parseLoadoutCheck(value) {
+  if (!value || typeof value.healthy !== "boolean" || !Array.isArray(value.loadouts)) return null
+  var out = []
+  for (var i = 0; i < value.loadouts.length; i++) {
+    var item = value.loadouts[i]
+    if (!item || typeof item.id !== "string" || typeof item.name !== "string" ||
+        LOADOUT_STATES.indexOf(item.state) < 0 || typeof item.attentionCount !== "number" ||
+        !Array.isArray(item.resources)) return null
+    for (var j = 0; j < item.resources.length; j++) {
+      var resource = item.resources[j]
+      if (!resource || typeof resource.id !== "string" ||
+          RESOURCE_STATES.indexOf(resource.currentState) < 0 ||
+          RESOURCE_STATES.indexOf(resource.healthState) < 0) return null
+    }
+    out.push(item)
+  }
+  return out
+}
+
+function mergeLoadoutViews(inventory, health) {
+  if (!Array.isArray(inventory) || !Array.isArray(health)) return null
+  var byId = {}
+  for (var i = 0; i < health.length; i++) byId[health[i].id] = health[i]
+  var out = []
+  for (var j = 0; j < inventory.length; j++) {
+    var stored = inventory[j]
+    var live = byId[stored.id]
+    if (!live) return null
+    var merged = {}
+    for (var key in stored) merged[key] = stored[key]
+    merged.state = live.state
+    merged.attentionCount = live.attentionCount
+    merged.resources = live.resources
+    out.push(merged)
+  }
+  return out
+}
+
+function summarizeLoadoutContent(profile) {
+  if (!profile || !profile.packages) return "Content unavailable"
+  var packages = (profile.packages.native || []).length + (profile.packages.aur || []).length
+  var plugins = (profile.plugins || []).length
+  var webapps = (profile.webapps || []).length
+  var parts = [plural(packages, "package"), plural(plugins, "plugin"), plural(webapps, "web app")]
+  if (profile.theme && profile.theme.name) parts.push("theme " + profile.theme.name)
+  return parts.join(" · ")
+}
+
+function loadoutContentNames(profile) {
+  if (!profile || !profile.packages) return ""
+  var names = (profile.packages.native || []).concat(profile.packages.aur || [])
+  var plugins = profile.plugins || []
+  var webapps = profile.webapps || []
+  for (var i = 0; i < plugins.length; i++) names.push(plugins[i].id)
+  for (var j = 0; j < webapps.length; j++) names.push(webapps[j].name)
+  if (profile.theme && profile.theme.name) names.push(profile.theme.name)
+  return names.join(" · ")
+}

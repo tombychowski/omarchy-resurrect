@@ -7,10 +7,10 @@ Defines the independent consent gates for actions that execute fetched build ins
 ## Requirements
 
 ### Requirement: AUR Builds Require Separate Consent
-The system SHALL require an explicit AUR decision before building packages from PKGBUILDs, independently of general overwrite confirmation.
+The system SHALL require an explicit AUR decision before building packages from PKGBUILDs during restore, loadout apply, or loadout repair, independently of general operation confirmation.
 
 #### Scenario: General yes does not authorize AUR
-- **WHEN** restore is run with `--yes` but without an AUR choice
+- **WHEN** restore, loadout apply, or loadout repair is run with `--yes` but without an AUR choice
 - **THEN** ress does not infer permission to build AUR packages
 
 #### Scenario: Review mode preserves package review
@@ -20,6 +20,11 @@ The system SHALL require an explicit AUR decision before building packages from 
 #### Scenario: Denied package is removed before consent
 - **WHEN** an AUR package is present in the configured deny list
 - **THEN** ress excludes it before presenting or executing the build decision
+
+#### Scenario: Declined loadout repair remains pending
+- **WHEN** the user declines an AUR build offered during loadout repair
+- **THEN** ress leaves the affected claim pending
+- **AND** a later repair can offer it again
 
 ### Requirement: Persistent Services Require Separate Consent
 The system SHALL require an explicit decision before enabling captured systemd user services and SHALL show what each candidate service executes.
@@ -50,4 +55,3 @@ The system SHALL exclude autostart entries by default and SHALL capture them onl
 #### Scenario: Default backup excludes autostart
 - **WHEN** autostart capture has not been enabled
 - **THEN** backup does not place autostart launchers in the vault
-

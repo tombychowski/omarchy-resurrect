@@ -60,11 +60,25 @@ if [[ -x $QMLLINT && -d $OMARCHY_SHELL ]]; then
   assert_equals "$MISSING" "" "every engine.<member> the panel binds to exists on the engine"
   # ...and the ids in the row list have to match the ones trigger() handles,
   # or a click does nothing.
-  for id in aur units backup restore auto share copy folder url preview apply; do
+  for id in aur units backup restore auto share copy folder url preview apply loadout-update loadout-repair loadout-remove; do
     grep -q "\"$id\"" "$REPO_DIR/Panel.qml" ||
       _fail "Panel.qml has no row id \"$id\""
   done
   _pass
+  grep -q '"loadouts"' "$REPO_DIR/Panel.qml" && _pass || _fail "Panel.qml exposes a Loadouts tab"
+  grep -q 'loadout", "list", "--json", "--contents"' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "Service.qml reads applied loadouts through documented CLI JSON"
+  grep -q 'loadout", "check", "--json"' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "Service.qml reads live loadout health through documented CLI JSON"
+  grep -q 'modelData.healthState' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "Panel.qml progressively reveals live resource health"
+  grep -q 'loadoutTerminalArgs("\|openLoadoutAction' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "loadout mutations are routed through the service terminal boundary"
+  if grep -q 'loadouts.json' "$REPO_DIR/Panel.qml" "$REPO_DIR/Service.qml"; then
+    _fail "QML must not read the registry directly"
+  else
+    _pass
+  fi
 else
   echo "  (skipped: no qmllint or no Omarchy shell to resolve imports against)"
 fi

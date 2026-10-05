@@ -2,8 +2,9 @@
 
 Five layers, in the order they catch things. The suite, mutation runner, and
 static/model QML checks are automated. Scratch-directory integration needs a
-real Omarchy machine, and the final layer needs a clean Omarchy VM. There are
-exactly six things only that final layer can tell you.
+real Omarchy machine, and the final layer needs a clean Omarchy VM. The six
+original restore boundaries and the applied-loadout cleanup boundaries below
+remain manual evidence.
 
 ## 1. The suite
 
@@ -32,7 +33,7 @@ refuse it as an unsafe remote — an artefact of the test rather than of ress.
 ## 2. Mutation testing
 
 ```bash
-./tests/mutate.sh           # ~12 minutes; every mutation runs the whole suite
+./tests/mutate.sh           # multi-hour currently; every mutation runs the whole suite
 ```
 
 A passing suite says the tests agree with the code, not that they would notice
@@ -42,7 +43,9 @@ finds anything, `verify` always says the machine matches, `plain()` stops
 stripping control characters — and reports any mutation no test caught.
 
 Run it when you change what the tests are *for*, not on every edit. A `SURVIVED`
-line is a feature the suite only appears to cover.
+line is a feature the suite only appears to cover. The historical 12-minute
+estimate no longer applies: the applied-loadout cases substantially expanded
+the suite, and the serial runner still executes every case for every mutation.
 
 It runs the suite once before breaking anything, and refuses to report on
 mutations when that baseline does not pass: a case that is already red counts as
@@ -117,6 +120,29 @@ vault a `packages/foreign.txt` with one real AUR name and one invented one, and
 answer `n` at the prompt: the invented one should be marked *not on
 aur.archlinux.org*.
 
+Applied-loadout command-boundary cases use the same scratch machine model to
+prove registry validation/atomicity, claims, conflict planning, drift, repair,
+direct package arguments, preservation decisions, Omarchy delegation, theme
+precedence, and panel parsing. Before release, additionally exercise a scratch
+registry with real tools: confirm mode `0600`, make a package-removal target
+that pacman refuses for dependencies, remove a disposable plugin/web app/theme
+through Omarchy, and verify an active-theme fallback. Do not use the live vault
+or a valued package/integration for these checks.
+
+The reproducible form is:
+
+```bash
+tests/manual/loadout-real-scratch.sh
+```
+
+It redirects all mutable user state to a `mktemp` home, uses pacman's read-only
+removal planner for the dependency refusal, exercises real disposable Omarchy
+cleanup targets, and runs real theme selection in Omarchy's headless mode. The
+2026-10-04 run passed on Omarchy `4.0.0.alpha` with pacman `7.1.0`; its full
+observations and limitations are recorded in the active change's
+`evidence.md`. It does not authorize or perform a successful root package
+removal and does not prove visible rendering.
+
 ## 5. What only a VM can tell you
 
 Everything above leaves six things unproven. All of them need a clean Omarchy
@@ -139,3 +165,21 @@ through.
    test above, so the desktop visibly changing is unverified.
 6. **The timing claim.** The README's restore number can only come from a real
    run on a fresh install.
+7. **Real package removal transactions.** The double proves exact safe flags,
+   dependency refusal, and resume logic; only pacman proves its real dependency
+   diagnosis and post-removal database state.
+8. **Real Omarchy cleanup side effects.** Plugin unload/rescan, launcher/icon
+   cleanup, and theme removal are delegated to Omarchy and must be observed.
+9. **Theme effect rendering.** Tests prove precedence commands; a VM proves the
+   fallback is visibly usable and an external selection remains undisturbed.
+10. **The Loadouts panel drawing.** Model tests and qmllint do not prove row
+    density, focus order, selection detail, or terminal handoff on the desktop.
+
+The 2026-10-04 Proxmox run recorded the exact status of these boundaries in
+[Fresh-machine validation](fresh-machine-validation.md). It closed the native
+package install and direct-removal, genuine-absence, Loadouts panel, and real
+Omarchy cleanup gaps for the disposable fixtures. It also observed real theme
+state precedence, fallback, baseline restoration, external override
+preservation, and the two fallback transitions on a rendered desktop. It did
+**not** exercise an AUR build, unit startup, encrypted secrets, or a timed
+full-vault restore; those remain manual release evidence.
