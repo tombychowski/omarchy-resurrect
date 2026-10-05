@@ -54,7 +54,7 @@ caught=0
 skipped=0
 
 run_mutation() {
-  local name="$1" old="$2" new="$3"
+  local name="$1" old="$2" new="$3" case_filter="${4:-}"
   [[ -n $FILTER && $name != *"$FILTER"* ]] && return 0
 
   local dir="$WORK/$name"
@@ -84,7 +84,11 @@ PY
   fi
 
   local out
-  out=$(cd "$dir" && ./tests/run.sh 2>&1)
+  if [[ -n $case_filter ]]; then
+    out=$(cd "$dir" && ./tests/run.sh "$case_filter" 2>&1)
+  else
+    out=$(cd "$dir" && ./tests/run.sh 2>&1)
+  fi
   if grep -q 'cases passed' <<<"$out"; then
     printf '  \e[31m✗\e[0m %-24s SURVIVED — nothing noticed\n' "$name"
     survived=$((survived + 1))
@@ -229,8 +233,15 @@ run_mutation webapp-verify-file-name \
   '      if [[ -f $HOME/.local/share/applications/$app.desktop ]]; then'
 
 run_mutation webapp-share-publishes-refused \
-  '    launcher_travels "$file" || continue' \
-  '    :'
+  '    definition=$(jq -nc --arg name "$name" --arg url "$web_url" --arg icon "$icon" \
+      '\''{name:$name,url:$url,icon:$icon}'\'')
+    if [[ -z $code ]]; then
+      rows+=("$(share_candidate_json "$id" webapp "$name" true "" "" "$none" false "$definition")")' \
+  '    definition=$(jq -nc --arg name "$name" --arg url "$web_url" --arg icon "$icon" \
+      '\''{name:$name,url:$url,icon:$icon}'\'')
+    if true; then
+      rows+=("$(share_candidate_json "$id" webapp "$name" true "" "" "$none" false "$definition")")' \
+  share-compose
 
 run_mutation webapp-restore-label-unchecked \
   '    if ! valid_label "$name"; then refused+=("$(plain "$name")"); continue; fi' \
@@ -334,6 +345,36 @@ run_mutation loadout-new-check-implicitly-repairs \
   '      result=$(loadout_check_json "$id")' \
   '      ASSUME_YES=1; repair_loadout "$id" >/dev/null 2>&1 || true
       result=$(loadout_check_json "$id")'
+
+# ---- custom Share composition --------------------------------------------
+
+run_mutation share-hides-unshareable \
+  "public=\$(jq -c '[.[] | del(.definition)]' <<<\"\$candidates\")" \
+  "public=\$(jq -c '[.[] | select(.shareable) | del(.definition)]' <<<\"\$candidates\")" \
+  share-compose
+
+run_mutation share-skips-final-selection-check \
+  '      [[ -n $candidate ]] || die "selected resource is not on this machine: $(plain "$id")"' \
+  '      [[ -n $candidate ]] || continue' \
+  share-compose
+
+run_mutation share-trusts-panel-definition-option \
+  '      *) die "unknown share option: $1" ;;' \
+  '      --definition) shift 2 ;;
+      *) die "unknown share option: $1" ;;' \
+  share-compose
+
+run_mutation share-skips-withdrawal-ack \
+  '        [[ ${acknowledgements[$id]:-} == "$fingerprint" ]] ||
+          die "acknowledgement required before removing unavailable resource: $(plain "$id")"' \
+  '        true ||
+          die "acknowledgement required before removing unavailable resource: $(plain "$id")"' \
+  share-compose
+
+run_mutation share-allows-many-themes \
+  '    (( theme_count <= 1 )) || die "a schema-version-1 loadout can select at most one theme"' \
+  '    (( theme_count >= 0 )) || die "a schema-version-1 loadout can select at most one theme"' \
+  share-compose
 
 # ---- the protocol ---------------------------------------------------------
 

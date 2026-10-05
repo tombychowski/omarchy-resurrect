@@ -16,6 +16,34 @@ The default output is `~/.local/share/ress/profile`. Choose another directory wh
 ress share --out /tmp/my-loadout
 ```
 
+The panel Share tab begins with an explicit choice: all shareable resources,
+the valid current export, an empty selection, or one applied loadout. Choosing
+all is the short path. The composer then lets you edit the name and description,
+search packages, plugins, web apps, and themes, add further applied loadouts,
+and toggle individual resources. A loadout can contain only one theme.
+
+Applied loadouts are starting selections, not authored copies: only healthy
+current resources whose definitions still match are added. Warnings name
+missing, changed, or conflicting entries. Adding another preset unions eligible
+resources; if it asks for another theme, your existing theme remains selected
+until you choose explicitly.
+
+The equivalent CLI workflow starts by inspecting the catalog:
+
+```bash
+ress share catalog --json
+ress share --custom --name "Small setup" \
+  --description "Tools for a lightweight machine" \
+  --select package:fd --select webapp:Draw --select theme-install:nord
+```
+
+An empty custom selection is refused. If a resource from the current export is
+no longer shareable, the panel keeps it visible and asks you to acknowledge its
+withdrawal. Direct CLI callers repeat the exact id and fingerprint returned by
+the catalog with `--acknowledge-unavailable ID FINGERPRINT`. The CLI reinspects
+the machine after you activate export, so stale selections or acknowledgements
+fail without changing the current profile; refresh and review the composer.
+
 Read the output warnings. A web app whose launcher form cannot be represented is left out rather than weakened into a misleading entry. Plugins and cloneable themes need a safe remote and exact commit to travel under the default pinning policy.
 
 Inspect `profile.json` before publishing. It should contain no dotfiles, keys, arbitrary files, or command field.
@@ -104,7 +132,10 @@ Repair uses the apply validators and pinning rules but only targets missing, saf
 
 ## Re-export and update
 
-Run `ress share` again to regenerate and commit changed profile content. Review the diff before pushing:
+Run `ress share` again for a whole-machine refresh, or open the panel's current
+export starting choice to preserve and edit its selection. Either path updates
+the same single profile repository; ress does not yet maintain a library of
+authored loadouts. Review the diff before pushing:
 
 ```bash
 git -C ~/.local/share/ress/profile diff HEAD~1

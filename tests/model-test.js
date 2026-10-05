@@ -19,6 +19,8 @@ new Function("exports", source + "\n" + [
   "plural", "summarize", "parseRecord", "consent",
   "loadoutState", "resourceHealth", "parseLoadoutList", "parseLoadoutCheck", "mergeLoadoutViews",
   "summarizeLoadoutContent", "loadoutContentNames",
+  "parseShareCatalog", "shareSelection", "selectedShareIds", "toggleShareResource",
+  "shareCounts", "sharePresetWarnings", "addSharePreset", "filterShareResources", "unacknowledgedShareResources",
 ].map((name) => `exports.${name} = typeof ${name} !== "undefined" ? ${name} : undefined;`)
   .join("\n"))(Model);
 
@@ -121,6 +123,83 @@ check("summarize loadout content", Model.summarizeLoadoutContent(profile),
   "2 packages · 1 plugin · 1 web app · theme night");
 check("list loadout content names", Model.loadoutContentNames(profile),
   "fd · brave-bin · acme.widget · Draw · night");
+
+// ---- share catalog and composer state -----------------------------------
+const fingerprint = "a".repeat(64);
+const shareCatalog = {
+  schemaVersion: 1,
+  resources: [
+    { id: "package:fd", kind: "package", name: "fd", shareable: true,
+      reasonCode: "", reason: "", channels: ["native"], active: false },
+    { id: "plugin:acme.widget", kind: "plugin", name: "acme.widget", shareable: true,
+      reasonCode: "", reason: "", channels: [], active: false },
+    { id: "theme-install:night", kind: "theme", name: "night", shareable: true,
+      reasonCode: "", reason: "", channels: [], active: true },
+    { id: "theme-install:day", kind: "theme", name: "day", shareable: true,
+      reasonCode: "", reason: "", channels: [], active: false },
+    { id: "webapp:Flags", kind: "webapp", name: "Flags", shareable: false,
+      reasonCode: "unsupported-launcher", reason: "flags", channels: [], active: false },
+  ],
+  currentExport: { state: "valid", name: "Mine", description: "desc",
+    resourceIds: ["package:fd"], unavailable: [
+      { id: "plugin:old", kind: "plugin", name: "old", reasonCode: "missing",
+        reason: "gone", fingerprint }
+    ] },
+  presets: { state: "valid", loadouts: [
+    { id: "work-1", name: "Work", resourceIds: ["plugin:acme.widget", "theme-install:day"],
+      warnings: [{ id: "webapp:missing", state: "missing" }] }
+  ] },
+  counts: { package: 1, plugin: 1, theme: 2, webapp: 1 }, limits: { themes: 1 }
+};
+check("parse share catalog", Model.parseShareCatalog(shareCatalog), shareCatalog);
+check("reject unknown share kind", Model.parseShareCatalog({ ...shareCatalog,
+  resources: [{ ...shareCatalog.resources[0], kind: "file" }] }), null);
+check("reject unavailable without reason", Model.parseShareCatalog({ ...shareCatalog,
+  resources: [{ ...shareCatalog.resources[4], reasonCode: "" }] }), null);
+check("reject unknown share reason", Model.parseShareCatalog({ ...shareCatalog,
+  resources: [{ ...shareCatalog.resources[4], reasonCode: "anything" }] }), null);
+check("reject package with unknown channel", Model.parseShareCatalog({ ...shareCatalog,
+  resources: [{ ...shareCatalog.resources[0], channels: ["flatpak"] }] }), null);
+check("reject partial catalog", Model.parseShareCatalog({ ...shareCatalog, limits: undefined }), null);
+check("reject malformed unavailable fingerprint", Model.parseShareCatalog({ ...shareCatalog,
+  currentExport: { ...shareCatalog.currentExport, unavailable: [
+    { ...shareCatalog.currentExport.unavailable[0], fingerprint: "short" }
+  ] } }), null);
+check("all start selects shareable resources and only the active theme",
+  Model.selectedShareIds(Model.shareSelection(shareCatalog, "all")),
+  ["package:fd", "plugin:acme.widget", "theme-install:night"]);
+check("current start", Model.selectedShareIds(Model.shareSelection(shareCatalog, "current")), ["package:fd"]);
+check("empty start", Model.selectedShareIds(Model.shareSelection(shareCatalog, "empty")), []);
+check("preset start", Model.selectedShareIds(Model.shareSelection(shareCatalog, "preset", "work-1")),
+  ["plugin:acme.widget", "theme-install:day"]);
+check("preset warnings are explicit", Model.sharePresetWarnings(shareCatalog.presets.loadouts[0]),
+  "webapp:missing (missing)");
+check("selected category counts", Model.shareCounts(shareCatalog,
+  { "package:fd": true, "plugin:acme.widget": true }),
+  { package: 1, plugin: 1, webapp: 0, theme: 0, total: 2 });
+let selection = Model.toggleShareResource(shareCatalog, { "theme-install:night": true }, "theme-install:day");
+check("theme toggle replaces prior theme", Model.selectedShareIds(selection), ["theme-install:day"]);
+selection = Model.toggleShareResource(shareCatalog, selection, "webapp:Flags");
+check("unavailable resource cannot be toggled", Model.selectedShareIds(selection), ["theme-install:day"]);
+let added = Model.addSharePreset(shareCatalog, { "package:fd": true, "theme-install:night": true }, "work-1");
+check("preset union retains manual resources", Model.selectedShareIds(added.selection),
+  ["package:fd", "plugin:acme.widget", "theme-install:night"]);
+check("preset union reports theme conflict", added.themeConflict, "theme-install:day");
+check("share search filters and bounds", Model.filterShareResources(shareCatalog, "theme", "day", 1).map(x => x.id),
+  ["theme-install:day"]);
+check("unavailable resource needs acknowledgement", Model.unacknowledgedShareResources(shareCatalog, {}).map(x => x.id),
+  ["plugin:old"]);
+check("matching acknowledgement satisfies resource", Model.unacknowledgedShareResources(shareCatalog,
+  { "plugin:old": fingerprint }), []);
+const largeCatalog = { ...shareCatalog, resources: Array.from({ length: 1000 }, (_, i) => ({
+  id: `package:pkg-${String(i).padStart(4, "0")}`, kind: "package",
+  name: `pkg-${String(i).padStart(4, "0")}`, shareable: true,
+  reasonCode: "", reason: "", channels: ["native"], active: false
+})), counts: { package: 1000 }, currentExport: { state: "absent", name: "Mine",
+  description: "", resourceIds: [], unavailable: [] },
+  presets: { state: "unavailable", loadouts: [], reasonCode: "invalid-registry", reason: "bad" } };
+check("large catalog validates", Model.parseShareCatalog(largeCatalog), largeCatalog);
+check("large catalog detail is bounded", Model.filterShareResources(largeCatalog, "package", "", 200).length, 200);
 
 // ---- the category table the panel renders --------------------------------
 check("categories count", Model.CATEGORIES.length, 6);

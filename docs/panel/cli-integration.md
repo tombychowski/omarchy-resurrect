@@ -22,6 +22,28 @@ In-panel operations call:
 <plugin>/bin/ress --porcelain share
 ```
 
+The Share composer additionally uses:
+
+```text
+<plugin>/bin/ress share catalog --json
+<plugin>/bin/ress --porcelain share --custom --name <name> --description <text>
+  --select <id>... --acknowledge-unavailable <id> <fingerprint>...
+```
+
+The catalog is fetched only when Share is active, not by the headless service
+or during ordinary Backup/Loadouts refresh. `Model.parseShareCatalog` validates
+the entire envelope and every record before `Service.qml` publishes it. The
+machine inventory can remain valid while `currentExport` is `absent` or
+`unavailable`, or while applied `presets` are independently unavailable. QML
+does not turn either optional failure into an empty source.
+
+Composer selection, search, metadata, and acknowledgements are ephemeral panel
+state. Export arguments are a process argument array containing only those two
+metadata strings, sorted logical ids, and exact acknowledgement fingerprints.
+No URL, commit, launcher definition, package channel, theme definition, claim,
+or cleanup policy is supplied by the panel. The CLI performs final reinspection
+and profile generation.
+
 The service clears prior transient operation state, launches one worker, and rejects another panel-owned operation while it is busy. The CLI's own lock remains authoritative across panel, terminal, scheduler, and direct CLI invocations.
 
 ## Status refresh
@@ -55,7 +77,7 @@ Worker stdout is split by line and passed to `Model.parseRecord`. Recognized rec
 
 Unknown or human prose lines return `null` and are ignored. Embedded pipes are retained in message fields. The exact record grammar is defined by the [CLI protocol contract](../contracts/cli-protocol.md).
 
-When the worker exits, the service clears busy progress, records stderr or a fallback exit-code error when needed, emits `finished(action, state)`, and refreshes status. The panel translates successful backup/share completion into brief notices and other terminal states into “finished with problems”; detailed failures remain available from the CLI message/error.
+When the worker exits, the service clears busy progress, records stderr or a fallback exit-code error when needed, emits `finished(action, state)`, and refreshes status. A Share exit also refreshes the authoritative catalog. The panel translates successful backup/share completion into brief notices and other terminal states into “finished with problems”; detailed failures remain available from the CLI message/error. A stale selection or acknowledgement refusal therefore remains a failure, preserves safe in-memory form fields, removes selections no longer marked shareable by the refreshed catalog, and requires review rather than claiming export.
 
 ## Restore and loadout terminal handoff
 
@@ -87,6 +109,8 @@ The panel-owned instance never starts the headless timer. It only displays `exte
 ## Error rules
 
 - Invalid status JSON is discarded, not partially merged with old or invented fields.
+- Invalid share-catalog JSON makes the composer unavailable; QML never reads
+  package, profile, plugin, launcher, theme, or registry files as a fallback.
 - Worker stderr becomes `lastError`.
 - A non-zero exit without stderr becomes `exited with code <n>`.
 - A `STEP` failure is shown immediately and retained in the operation log.
@@ -96,11 +120,11 @@ The panel-owned instance never starts the headless timer. It only displays `exte
 
 ## Keyboard and IPC
 
-`PanelKeyCatcher` owns navigation, activation, closing, tab switching, and direct action shortcuts while the URL field does not have focus. Escape returns focus from the URL field. The panel also exposes IPC handlers for open, close, toggle, backup, and opening a named tab; IPC backup still delegates to `engine.backupNow()` and the CLI.
+`PanelKeyCatcher` owns navigation, activation, closing, tab switching, and direct action shortcuts while a text field does not have focus. Enter activates start choices, categories, resource toggles, preset additions, acknowledgements, and export. Enter focuses name, description, or category search; Escape returns from each field to panel navigation. The `s` shortcut and `openTab("share")` IPC entry both request the catalog. The panel also exposes IPC handlers for open, close, toggle, backup, and opening a named tab; IPC backup still delegates to `engine.backupNow()` and the CLI.
 
 ## Verification
 
-- `tests/model-test.js` verifies parsing, freshness, consent language, loadout lifecycle/resource-health language, malformed handling, credential stripping, and category metadata.
+- `tests/model-test.js` verifies parsing, freshness, consent language, loadout lifecycle/resource-health language, strict catalog handling, selection unions, one-theme behavior, acknowledgement fingerprints, bounded search, malformed handling, credential stripping, and category metadata.
 - `tests/cases/12-porcelain.sh` verifies CLI stdout contains only defined records and reports deferred/failed work.
-- `tests/cases/16-qml.sh` runs model tests, QML lint when available, and cross-checks every `engine.<member>` reference against `Service.qml`.
+- `tests/cases/16-qml.sh` runs model tests, QML lint when available, cross-checks every `engine.<member>` reference against `Service.qml`, and asserts catalog and selective-export argument-array boundaries.
 - A clean Omarchy VM remains required to verify rendering, focus, bar mounting, clicks, and terminal handoff end to end.

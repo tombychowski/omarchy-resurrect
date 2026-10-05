@@ -60,7 +60,23 @@ The exact vault and profile formats are defined in [contracts](../contracts/).
 
 ### Loadout
 
-`ress share` creates a fixed-schema `profile.json`. `ress apply` resolves and normalizes the source, plans compatible/shared/conflicting resources, confirms, records desired state and a journal before mutation, and records each outcome. Exact reapply reconciles the same local loadout; changed known-source content requires explicit update. Check is read-only, repair is explicit, and removal withdraws claims using provenance and current evidence. The panel consumes CLI JSON and hands mutations to a terminal.
+`ress share` creates a fixed-schema `profile.json` in one current profile
+repository. Its canonical candidate collector supplies both legacy whole-machine
+export and `ress share catalog --json`; selective export accepts only logical
+ids, reinspects them under an output-scoped lock, and renders complete generated
+files before replacement. Current-export fingerprints bind explicit withdrawal
+acknowledgements to prior canonical definitions. The catalog exposes no resource
+definitions, commands, file content, credentials, claims, or cleanup authority.
+
+The Share panel requests that catalog only while its workflow is active,
+validates it in `Model.js`, and keeps draft selection and metadata in memory.
+`Service.qml` passes only argument-array metadata, ids, and acknowledgement
+fingerprints to the CLI. QML never reads the profile, package database, plugin
+tree, launchers, theme state, or applied-loadout registry to reconstruct an
+inventory. A CLI refusal refreshes the catalog without being presented as an
+export success.
+
+`ress apply` resolves and normalizes the source, plans compatible/shared/conflicting resources, confirms, records desired state and a journal before mutation, and records each outcome. Exact reapply reconciles the same local loadout; changed known-source content requires explicit update. Check is read-only, repair is explicit, and removal withdraws claims using provenance and current evidence. The panel consumes CLI JSON and hands mutations to a terminal.
 
 ## External tools
 

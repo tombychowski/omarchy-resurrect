@@ -60,7 +60,9 @@ if [[ -x $QMLLINT && -d $OMARCHY_SHELL ]]; then
   assert_equals "$MISSING" "" "every engine.<member> the panel binds to exists on the engine"
   # ...and the ids in the row list have to match the ones trigger() handles,
   # or a click does nothing.
-  for id in aur units backup restore auto share copy folder url preview apply loadout-update loadout-repair loadout-remove; do
+  for id in aur units backup restore auto copy folder url preview apply loadout-update loadout-repair loadout-remove \
+    share-start-all share-start-current share-start-empty share-name share-description share-search \
+    share-export share-back; do
     grep -q "\"$id\"" "$REPO_DIR/Panel.qml" ||
       _fail "Panel.qml has no row id \"$id\""
   done
@@ -70,12 +72,40 @@ if [[ -x $QMLLINT && -d $OMARCHY_SHELL ]]; then
     _fail "Service.qml reads applied loadouts through documented CLI JSON"
   grep -q 'loadout", "check", "--json"' "$REPO_DIR/Service.qml" && _pass ||
     _fail "Service.qml reads live loadout health through documented CLI JSON"
+  grep -q '"share", "catalog", "--json"' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "Service.qml reads the Share catalog through documented CLI JSON"
+  grep -q 'function refreshShareCatalog' "$REPO_DIR/Service.qml" &&
+    grep -q 'if (name === "share" && opened) engine.refreshShareCatalog()' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "the catalog is requested only through the active Share workflow"
+  grep -q 'function shareCustom(name, description, ids, acknowledgements)' "$REPO_DIR/Service.qml" &&
+    grep -q 'args = args.concat(\["--select", selected\[i\]\])' "$REPO_DIR/Service.qml" &&
+    grep -q '"--acknowledge-unavailable", resourceId' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "selective export uses argument-array ids and acknowledgement fingerprints"
+  if grep -Eq 'sh -c|bash -c|shellCommand' "$REPO_DIR/Service.qml"; then
+    _fail "Service.qml must not assemble Share arguments as a shell string"
+  else
+    _pass
+  fi
+  for choice in 'All shareable resources' 'Current export' 'Empty selection' 'OR AN APPLIED LOADOUT'; do
+    grep -q "$choice" "$REPO_DIR/Panel.qml" || _fail "Share composer is missing explicit choice: $choice"
+  done
+  _pass
+  grep -q 'shareName = current.name' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "Share composer uses the CLI catalog's metadata default"
+  grep -q "Selecting one that is shareable exports this machine's current definition, not the applied snapshot" \
+      "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "modified preset selection explains that the current definition is exported"
+  grep -q 'filterShareResources(engine.shareCatalog, root.shareCategory, root.shareSearch, 200)' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "Share category detail is search-filtered and bounded"
+  grep -q 'Keys.onEscapePressed: keyCatcher.forceActiveFocus()' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "Share text fields expose keyboard focus return"
   grep -q 'modelData.healthState' "$REPO_DIR/Panel.qml" && _pass ||
     _fail "Panel.qml progressively reveals live resource health"
   grep -q 'loadoutTerminalArgs("\|openLoadoutAction' "$REPO_DIR/Panel.qml" && _pass ||
     _fail "loadout mutations are routed through the service terminal boundary"
-  if grep -q 'loadouts.json' "$REPO_DIR/Panel.qml" "$REPO_DIR/Service.qml"; then
-    _fail "QML must not read the registry directly"
+  if grep -Eq 'loadouts\.json|profile\.json|\.local/share/applications|\.config/omarchy/(plugins|themes)' \
+      "$REPO_DIR/Panel.qml" "$REPO_DIR/Service.qml"; then
+    _fail "QML must not read profile, registry, or machine resource files directly"
   else
     _pass
   fi

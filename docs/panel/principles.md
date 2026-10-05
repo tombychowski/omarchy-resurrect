@@ -10,7 +10,7 @@ The panel should not present a dashboard merely because more data is available. 
 
 ## The CLI is the authority
 
-The panel obtains durable state from `ress status --json` and `ress loadout list --json --contents`, live resource health from `ress loadout check --json`, and operation state from the porcelain protocol. It invokes CLI commands for mutations. It does not inspect vault or registry files, recreate validation rules, or infer success from animation or elapsed time.
+The panel obtains durable state from `ress status --json` and `ress loadout list --json --contents`, live resource health from `ress loadout check --json`, share candidates and starting choices from `ress share catalog --json`, and operation state from the porcelain protocol. It invokes CLI commands for mutations. It does not inspect vault, profile, package, integration, or registry files, recreate validation rules, or infer success from animation or elapsed time.
 
 If status cannot be parsed, the panel discards it. It must not fill missing vault facts from guesses. Process stderr, terminal records, and exit status determine operation errors.
 
@@ -25,6 +25,13 @@ Low-risk, familiar actions stay close:
 - toggle capture categories;
 - change scheduled-backup and consent policies; and
 - copy or open the generated share location.
+
+Share uses progressive disclosure of complexity. It first asks for an explicit
+starting point—All shareable resources is the short recommended path, while
+Current export, Empty selection, and an applied loadout enable precise work.
+Composition then reveals metadata, category summaries, bounded category search,
+resource toggles, additive presets, and unavailable-item acknowledgements. The
+top level never renders the full package inventory.
 
 Actions needing longer review or interaction move to a terminal:
 
@@ -53,9 +60,9 @@ The panel never estimates completion from time. A stale successful backup remain
 
 ## Compact, keyboard-first interaction
 
-The same actions remain available to pointer and keyboard users. Cursor movement, tab switching, activation, direct `b`/`r`/`s`/`a`/`l` shortcuts, and closing are first-class paths. Focus entering the profile URL field must also have a keyboard path back to panel navigation.
+The same actions remain available to pointer and keyboard users. Cursor movement, tab switching, activation, direct `b`/`r`/`s`/`a`/`l` shortcuts, and closing are first-class paths. Focus entering the profile URL, loadout name, description, or Share search fields must also have an Escape path back to panel navigation.
 
-The panel keeps a predictable three-tab structure—Backup, Share, Loadouts—and preserves selection language across pointer and keyboard interaction. The Loadouts tab first gives count and attention, then rows, then selected metadata and corrective actions.
+The panel keeps a predictable three-tab structure—Backup, Share, Loadouts—and preserves selection language across pointer and keyboard interaction. Share distinguishes the authored **current export** from **applied loadouts**, which are selection seeds and never an authored library. The Loadouts tab first gives count and attention, then rows, then selected metadata and corrective actions.
 
 ## Honest outcomes
 

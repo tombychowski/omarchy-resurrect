@@ -159,6 +159,30 @@ privilege or destructive prompt occurs behind the panel.
 - `ress verify` afterwards, saying it matches.
 - The desktop afterwards.
 
+### Share composer checklist
+
+On a clean Omarchy desktop with a large explicit package inventory, open Share
+directly with the `s` shortcut and through the named-tab IPC entry. Record:
+
+- loading, unavailable, explicit-start, compose, exporting, and refusal views;
+- All resources, Current export, Empty selection, and an applied-loadout start;
+- name and description editing, category entry, bounded search, pointer toggles,
+  keyboard toggles, radio-style theme replacement, and Escape back to navigation;
+- adding a second applied loadout, including excluded-resource warnings and a
+  conflicting theme that preserves the existing choice;
+- an unavailable current-export entry remaining visible until its individual
+  withdrawal acknowledgement, plus stale-fingerprint refusal and catalog
+  refresh without a false success notice;
+- responsive scrolling/search with the large package list and no full package
+  inventory rendered at the top level;
+- successful schema-version-1 dry-run apply of the composed result; and
+- continuity of the profile folder, existing Git remote/history, copied share
+  command, and configured profile URL.
+
+Capture pointer and keyboard focus separately. Automated model tests, QML lint,
+and CLI fixtures do not prove rendered focus, click targets, scroll behavior, or
+large-list frame responsiveness.
+
 No recorder ships by default. Either `sudo pacman -S wf-recorder` inside the VM,
 or record the VM window from the host — which also captures the boot and keeps a
 recorder out of the machine you are presenting as fresh.
@@ -237,3 +261,57 @@ performs validation and deletion. Both gaps have focused automated assertions.
 Still not claimed from this run: AUR builds, systemd units starting after login,
 encrypted secrets, a timed full restore, or enabled-plugin unload through a
 live shell on the clean target.
+
+## Share-composer clean-VM boundary — 2026-10-05
+
+Run on a disposable Omarchy 4.0.4 VM (`7.2.5-3-omarchy`) with the plugin linked
+from this change and enabled in the live shell. The initial catalog contained
+185 resources: 162 explicit packages, one plugin, no user web apps, and 22
+themes. A representable test web app raised the later total to 186. A final
+direct catalog read completed in 2.638 seconds. The panel kept the full package
+inventory behind its category and bounded search view; opening categories,
+filtering to one result, and toggling it showed no observed input stall. This
+was an interaction observation, not a frame-time benchmark.
+
+The rendered panel established the following manual-only evidence:
+
+- named-tab IPC opened Share directly and showed a loading view followed by the
+  explicit All resources, Current export, Empty selection, and applied-loadout
+  starts;
+- the keyboard path started from All resources, edited the default
+  `montagetest's Omarchy` name and description, searched packages, toggled a
+  result, and returned from each text field with Escape;
+- a Wayland virtual pointer started from Empty selection and toggled the
+  rendered `aether` package control; a separate pointer path selected
+  `catppuccin-latte` and then `gruvbox`, and the exported schema-1 profile
+  contained exactly the final `gruvbox` theme;
+- two real applied loadouts supplied preset starts and additive actions. After
+  the first loadout's web-app definition was changed, its excluded-resource
+  warning named that web app. Adding the second loadout retained the already
+  selected conflicting theme and displayed the instruction to choose another
+  theme explicitly;
+- changing an unavailable current-export web app after its acknowledgement
+  changed the catalog fingerprint. Export refused with
+  `acknowledgement required`, preserved the profile, refreshed the catalog,
+  retained safe selections, discarded the stale acknowledgement, and did not
+  show a success notice. Acknowledging the refreshed fingerprint then exported
+  successfully;
+- the busy `Reading this machine`/export state, the refusal wording, preset
+  warning, current-definition replacement wording, and successful return to the
+  composer were all visible in the rendered panel;
+- the profile-folder action opened the existing profile directory, the copy
+  action produced the configured `ress apply ...` form, and repeated panel
+  exports retained the Git repository and accumulated history; and
+- after adding a non-network test GitHub remote, a further selective export
+  retained that remote and history and set `PROFILE_URL` to
+  `ress.sh/gh/montagetest/ress-vm-evidence`. Applying the composed schema-1
+  profile with `--dry-run` parsed it through the existing apply path and
+  produced the expected theme install/activation plan without mutating the VM.
+
+The VM's Omarchy theme command did not resolve the catalog-advertised bundled
+theme names when the applied-loadout fixtures were first created, so this run
+does not claim a live theme activation. The compose/export contract and
+schema-1 dry-run compatibility were observed. The whole-catalog unavailable
+pane was not deliberately induced, and no profile was pushed to a hosted
+remote; those remain outside this run rather than inferred from automated
+tests.

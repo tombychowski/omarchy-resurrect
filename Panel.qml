@@ -35,14 +35,55 @@ Panel {
   property string applyUrl: ""
   property string selectedLoadoutId: ""
   property string notice: ""
+  property string shareStage: "choose"
+  property var shareSelection: ({})
+  property var shareAcknowledgements: ({})
+  property string shareName: "My ress loadout"
+  property string shareDescription: ""
+  property string shareCategory: "package"
+  property string shareSearch: ""
+  property string shareConflict: ""
+  readonly property string shareViewState: engine.loadingShareCatalog ? "loading"
+    : !engine.shareCatalogAvailable ? "unavailable"
+    : engine.busy && engine.busyAction === "share" ? "exporting"
+    : shareStage
 
   readonly property var tabs: ["backup", "share", "loadouts"]
   readonly property var rows: {
-    if (tab === "share") return [
-      { id: "share",  label: "Export loadout" },
-      { id: "copy",   label: "Copy the share command" },
-      { id: "folder", label: "Open the profile folder" }
-    ]
+    if (tab === "share") {
+      var shareRows = []
+      if (shareStage === "choose") {
+        shareRows.push({ id: "share-start-all", label: "All resources" })
+        shareRows.push({ id: "share-start-current", label: "Current export" })
+        shareRows.push({ id: "share-start-empty", label: "Empty selection" })
+        var starts = engine.shareCatalog && engine.shareCatalog.presets
+          ? engine.shareCatalog.presets.loadouts : []
+        for (var s = 0; s < starts.length; s++)
+          shareRows.push({ id: "share-start-preset:" + starts[s].id, label: starts[s].name })
+      } else if (shareStage === "compose") {
+        shareRows.push({ id: "share-name", label: "Name" })
+        shareRows.push({ id: "share-description", label: "Description" })
+        for (var k = 0; k < Model.SHARE_KINDS.length; k++)
+          shareRows.push({ id: "share-category:" + Model.SHARE_KINDS[k], label: Model.SHARE_KINDS[k] })
+        shareRows.push({ id: "share-search", label: "Search" })
+        var visibleResources = Model.filterShareResources(engine.shareCatalog, shareCategory, shareSearch, 200)
+        for (var r = 0; r < visibleResources.length; r++)
+          shareRows.push({ id: "share-resource:" + visibleResources[r].id, label: visibleResources[r].name })
+        var additions = engine.shareCatalog && engine.shareCatalog.presets
+          ? engine.shareCatalog.presets.loadouts : []
+        for (var p = 0; p < additions.length; p++)
+          shareRows.push({ id: "share-add:" + additions[p].id, label: additions[p].name })
+        var unavailable = engine.shareCatalog && engine.shareCatalog.currentExport
+          ? engine.shareCatalog.currentExport.unavailable : []
+        for (var u = 0; u < unavailable.length; u++)
+          shareRows.push({ id: "share-ack:" + unavailable[u].id, label: unavailable[u].name })
+        shareRows.push({ id: "share-export", label: "Export loadout" })
+        shareRows.push({ id: "share-back", label: "Choose another start" })
+      }
+      shareRows.push({ id: "copy", label: "Copy the share command" })
+      shareRows.push({ id: "folder", label: "Open the profile folder" })
+      return shareRows
+    }
     if (tab === "loadouts") {
       var loadoutRows = [
         { id: "url", label: "Profile URL" },
@@ -80,13 +121,70 @@ Panel {
     return null
   }
 
+  function setTab(name) {
+    tab = name
+    cursor = 0
+    cursorActive = false
+    if (name === "share" && opened) engine.refreshShareCatalog()
+  }
+
+  function beginShare(source, presetId) {
+    if (!engine.shareCatalogAvailable) { flash("Share catalog is unavailable"); return }
+    var current = engine.shareCatalog.currentExport
+    if (source === "current" && current.state !== "valid") {
+      flash(current.state === "absent" ? "There is no current export" : "Current export is unavailable")
+      return
+    }
+    shareSelection = Model.shareSelection(engine.shareCatalog, source, presetId || "")
+    shareAcknowledgements = ({})
+    shareConflict = ""
+    // The catalog supplies the CLI's default name when no valid current export
+    // exists, keeping panel and direct-CLI composition defaults identical.
+    shareName = current.name
+    shareDescription = current.state === "valid" ? current.description : ""
+    shareStage = "compose"
+    cursor = 0
+  }
+
+  function selectedShareCount() {
+    return Model.selectedShareIds(shareSelection).length
+  }
+
+  function pendingWithdrawals() {
+    return Model.unacknowledgedShareResources(engine.shareCatalog, shareAcknowledgements)
+  }
+
+  function canExportShare() {
+    return engine.shareCatalogAvailable && selectedShareCount() > 0 &&
+      shareName.replace(/^\s+|\s+$/g, "") !== "" && shareName.length <= 120 &&
+      shareDescription.length <= 1000 && pendingWithdrawals().length === 0 && !engine.anyBusy
+  }
+
+  function reconcileShareCatalog(catalog) {
+    if (!catalog || shareStage !== "compose") return
+    var safe = {}, safeAcks = {}
+    var ids = Model.selectedShareIds(shareSelection)
+    for (var i = 0; i < ids.length; i++) {
+      var resource = Model.shareResourceById(catalog, ids[i])
+      if (resource && resource.shareable) safe[ids[i]] = true
+    }
+    var unavailable = catalog.currentExport.unavailable || []
+    for (var u = 0; u < unavailable.length; u++) {
+      var item = unavailable[u]
+      if (shareAcknowledgements[item.id] === item.fingerprint)
+        safeAcks[item.id] = item.fingerprint
+    }
+    shareSelection = safe
+    shareAcknowledgements = safeAcks
+  }
+
   // -------------------------------------------------------------- behaviour
 
   function moveCursor(dx, dy) {
     cursorActive = true
     if (dx !== 0) {
       var t = tabs.indexOf(tab) + dx
-      if (t >= 0 && t < tabs.length) { tab = tabs[t]; cursor = 0 }
+      if (t >= 0 && t < tabs.length) setTab(tabs[t])
       return
     }
     if (dy === 0) return
@@ -108,6 +206,40 @@ Panel {
       selectedLoadoutId = id.substring(8)
       return
     }
+    if (id.indexOf("share-start-preset:") === 0) {
+      beginShare("preset", id.substring(19))
+      return
+    }
+    if (id.indexOf("share-category:") === 0) {
+      shareCategory = id.substring(15)
+      shareSearch = ""
+      cursor = 0
+      return
+    }
+    if (id.indexOf("share-resource:") === 0) {
+      shareSelection = Model.toggleShareResource(engine.shareCatalog, shareSelection, id.substring(15))
+      return
+    }
+    if (id.indexOf("share-add:") === 0) {
+      var added = Model.addSharePreset(engine.shareCatalog, shareSelection, id.substring(10))
+      shareSelection = added.selection
+      shareConflict = added.themeConflict
+      if (added.themeConflict !== "") flash("Theme kept; choose another theme explicitly")
+      return
+    }
+    if (id.indexOf("share-ack:") === 0) {
+      var ackId = id.substring(10)
+      var pending = engine.shareCatalog.currentExport.unavailable || []
+      var nextAck = {}, found = null
+      for (var a in shareAcknowledgements) nextAck[a] = shareAcknowledgements[a]
+      for (var q = 0; q < pending.length; q++) if (pending[q].id === ackId) found = pending[q]
+      if (found) {
+        if (nextAck[ackId] === found.fingerprint) delete nextAck[ackId]
+        else nextAck[ackId] = found.fingerprint
+      }
+      shareAcknowledgements = nextAck
+      return
+    }
     switch (id) {
       case "backup":
         if (!engine.backupNow()) flash("Already running")
@@ -127,8 +259,24 @@ Panel {
       case "units":
         engine.setValue("ENABLE_UNITS", nextConsent(engine.enableUnits))
         break
-      case "share":
-        if (!engine.shareNow()) flash("Already running")
+      case "share-start-all": beginShare("all", ""); break
+      case "share-start-current": beginShare("current", ""); break
+      case "share-start-empty": beginShare("empty", ""); break
+      case "share-name": shareNameField.forceActiveFocus(); break
+      case "share-description": shareDescriptionField.forceActiveFocus(); break
+      case "share-search": shareSearchField.forceActiveFocus(); break
+      case "share-export":
+        if (selectedShareCount() === 0) { flash("Choose at least one resource"); break }
+        if (shareName.replace(/^\s+|\s+$/g, "") === "") { flash("Add a loadout name"); break }
+        if (shareName.length > 120 || shareDescription.length > 1000) { flash("Name or description is too long"); break }
+        if (pendingWithdrawals().length > 0) { flash("Acknowledge unavailable resources first"); break }
+        if (!engine.shareCustom(shareName, shareDescription,
+                                Model.selectedShareIds(shareSelection), shareAcknowledgements))
+          flash("Already running")
+        break
+      case "share-back":
+        shareStage = "choose"
+        cursor = 0
         break
       case "copy":
         copyProc.command = ["wl-copy", "--", shareCommand]
@@ -183,6 +331,7 @@ Panel {
     notice = ""
     if (panelFlick) panelFlick.contentY = 0
     engine.refresh()
+    if (tab === "share") engine.refreshShareCatalog()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -195,6 +344,9 @@ Panel {
       root.flash(state === "ok"
         ? (action === "backup" ? "Backed up" : "Loadout exported")
         : (action + " finished with problems"))
+    }
+    onShareCatalogChanged: {
+      root.reconcileShareCatalog(shareCatalog)
     }
   }
 
@@ -219,9 +371,7 @@ Panel {
     // Open straight to a tab, so a keybind can go to Share without three keys.
     function openTab(name: string): string {
       if (root.tabs.indexOf(name) < 0) return "unknown tab: " + name
-      root.tab = name
-      root.cursor = 0
-      root.cursorActive = false
+      root.setTab(name)
       root.open()
       return "ok"
     }
@@ -282,7 +432,8 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: urlField.activeFocus
+      blocked: urlField.activeFocus || shareNameField.activeFocus ||
+        shareDescriptionField.activeFocus || shareSearchField.activeFocus
       onMoveRequested: function(dx, dy) { root.moveCursor(dx, dy) }
       onActivateRequested: root.activate()
       onCloseRequested: root.close()
@@ -291,9 +442,9 @@ Panel {
         var key = String(t).toLowerCase()
         if (key === "b") root.trigger("backup")
         else if (key === "r") root.trigger("restore")
-        else if (key === "s") { root.tab = "share"; root.cursor = 0 }
-        else if (key === "a" || key === "l") { root.tab = "loadouts"; root.cursor = 0 }
-        else if (key === "?") root.tab = "backup"
+        else if (key === "s") root.setTab("share")
+        else if (key === "a" || key === "l") root.setTab("loadouts")
+        else if (key === "?") root.setTab("backup")
       }
 
       Flickable {
@@ -515,23 +666,274 @@ Panel {
 
             Text {
               width: parent.width
-              text: "A loadout is your setup without your data: the package list, "
-                + "the plugins, the web apps and the theme. No dotfiles, no keys, "
-                + "no home directory. Push it to a public repo and anyone can "
-                + "become this machine."
+              text: "Build the current shared loadout from resources on this machine. "
+                + "The CLI checks every selection again before it changes the profile. "
+                + "No dotfiles, keys, home files or applied-loadout ownership travel."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
 
-            ActionRow {
+            Text {
+              visible: root.shareViewState === "loading"
               width: parent.width
-              rowId: "share"
-              glyph: ""
-              title: engine.busy && engine.busyAction === "share" ? "Exporting…" : "Export loadout"
-              subtitle: "one profile.json — no dotfiles, no attachments"
+              text: "Inspecting shareable resources…"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
             }
+
+            Text {
+              visible: root.shareViewState === "unavailable"
+              width: parent.width
+              text: "The Share catalog is unavailable. No machine state will be reconstructed in the panel."
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            Column {
+              visible: !engine.loadingShareCatalog && engine.shareCatalogAvailable && root.shareStage === "choose"
+              width: parent.width
+              spacing: Style.space(6)
+
+              PanelSectionHeader { text: "START WITH"; foreground: root.foreground; fontFamily: root.fontFamily }
+              ActionRow {
+                width: parent.width; rowId: "share-start-all"; glyph: "󰐕"
+                title: "All shareable resources"; subtitle: "recommended · the quickest path"
+                primary: true
+              }
+              ActionRow {
+                width: parent.width; rowId: "share-start-current"; glyph: "󰋚"
+                title: "Current export"
+                subtitle: engine.shareCatalog && engine.shareCatalog.currentExport.state === "valid"
+                  ? "edit its metadata and current selections"
+                  : (engine.shareCatalog && engine.shareCatalog.currentExport.state === "absent"
+                      ? "not available · no profile has been exported" : "not available · profile could not be validated")
+                actionable: !!(engine.shareCatalog && engine.shareCatalog.currentExport.state === "valid")
+              }
+              ActionRow {
+                width: parent.width; rowId: "share-start-empty"; glyph: "󰝒"
+                title: "Empty selection"; subtitle: "choose every resource yourself"
+              }
+
+              PanelSectionHeader { text: "OR AN APPLIED LOADOUT"; foreground: root.foreground; fontFamily: root.fontFamily }
+              Text {
+                visible: engine.shareCatalog && engine.shareCatalog.presets.state !== "valid"
+                width: parent.width
+                text: "Applied-loadout starting choices are unavailable; manual composition still works."
+                color: root.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Repeater {
+                model: engine.shareCatalog && engine.shareCatalog.presets.state === "valid"
+                  ? engine.shareCatalog.presets.loadouts : []
+                ActionRow {
+                  required property var modelData
+                  width: parent.width
+                  rowId: "share-start-preset:" + modelData.id
+                  glyph: modelData.warnings.length > 0 ? "" : "󰐕"
+                  title: modelData.name
+                  subtitle: Model.plural(modelData.resourceIds.length, "eligible resource")
+                    + (modelData.warnings.length ? " · " + modelData.warnings.length + " not selected" : "")
+                }
+              }
+              Repeater {
+                model: engine.shareCatalog && engine.shareCatalog.presets.state === "valid"
+                  ? engine.shareCatalog.presets.loadouts : []
+                Text {
+                  required property var modelData
+                  visible: modelData.warnings.length > 0
+                  width: parent.width
+                  text: modelData.name + " excludes: " + Model.sharePresetWarnings(modelData)
+                  color: root.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WrapAnywhere
+                }
+              }
+            }
+
+            Column {
+              visible: !engine.loadingShareCatalog && engine.shareCatalogAvailable && root.shareStage === "compose"
+              width: parent.width
+              spacing: Style.space(8)
+
+              TextField {
+                id: shareNameField
+                width: parent.width
+                placeholderText: "Loadout name"
+                text: root.shareName
+                foreground: root.foreground
+                font.family: root.fontFamily
+                hasCursor: root.hasCursor("share-name")
+                onTextChanged: root.shareName = text
+                onAccepted: keyCatcher.forceActiveFocus()
+                Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+              }
+              TextField {
+                id: shareDescriptionField
+                width: parent.width
+                placeholderText: "Description (optional)"
+                text: root.shareDescription
+                foreground: root.foreground
+                font.family: root.fontFamily
+                hasCursor: root.hasCursor("share-description")
+                onTextChanged: root.shareDescription = text
+                onAccepted: keyCatcher.forceActiveFocus()
+                Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+              }
+
+              PanelSectionHeader { text: "RESOURCES"; foreground: root.foreground; fontFamily: root.fontFamily }
+              Repeater {
+                model: Model.SHARE_KINDS
+                ActionRow {
+                  required property var modelData
+                  width: parent.width
+                  rowId: "share-category:" + modelData
+                  glyph: modelData === "theme" ? "" : (modelData === "package" ? "" : "󰏗")
+                  title: modelData === "webapp" ? "Web apps"
+                    : modelData.charAt(0).toUpperCase() + modelData.slice(1) + "s"
+                  subtitle: {
+                    var counts = Model.shareCounts(engine.shareCatalog, root.shareSelection)
+                    return Model.plural(counts[modelData], "selected") + " · open to search and choose"
+                  }
+                  primary: root.shareCategory === modelData
+                }
+              }
+
+              TextField {
+                id: shareSearchField
+                width: parent.width
+                placeholderText: "Search " + root.shareCategory + "s"
+                text: root.shareSearch
+                foreground: root.foreground
+                font.family: root.fontFamily
+                hasCursor: root.hasCursor("share-search")
+                onTextChanged: root.shareSearch = text
+                onAccepted: keyCatcher.forceActiveFocus()
+                Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+              }
+              Text {
+                width: parent.width
+                text: "Showing at most 200 matches. Themes are a single choice."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Repeater {
+                model: Model.filterShareResources(engine.shareCatalog, root.shareCategory, root.shareSearch, 200)
+                ActionRow {
+                  required property var modelData
+                  width: parent.width
+                  rowId: "share-resource:" + modelData.id
+                  glyph: modelData.shareable ? (modelData.active ? "" : "○") : ""
+                  title: modelData.name
+                  subtitle: modelData.shareable
+                    ? (modelData.channels.length ? modelData.channels.join(" · ") : modelData.id)
+                    : ("not shareable · " + modelData.reason)
+                  actionable: modelData.shareable
+                  trailing: modelData.shareable
+                  trailingOn: !!root.shareSelection[modelData.id]
+                }
+              }
+
+              PanelSectionHeader { text: "ADD FROM APPLIED LOADOUT"; foreground: root.foreground; fontFamily: root.fontFamily }
+              Text {
+                width: parent.width
+                text: "Excluded resources are not added automatically. Selecting one that is shareable exports this machine's current definition, not the applied snapshot."
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+              Repeater {
+                model: engine.shareCatalog && engine.shareCatalog.presets.state === "valid"
+                  ? engine.shareCatalog.presets.loadouts : []
+                ActionRow {
+                  required property var modelData
+                  width: parent.width
+                  rowId: "share-add:" + modelData.id
+                  glyph: ""
+                  title: modelData.name
+                  subtitle: Model.plural(modelData.resourceIds.length, "eligible resource")
+                    + (modelData.warnings.length ? " · excludes " + modelData.warnings.length + " needing attention" : "")
+                }
+              }
+              Repeater {
+                model: engine.shareCatalog && engine.shareCatalog.presets.state === "valid"
+                  ? engine.shareCatalog.presets.loadouts : []
+                Text {
+                  required property var modelData
+                  visible: modelData.warnings.length > 0
+                  width: parent.width
+                  text: modelData.name + " excludes: " + Model.sharePresetWarnings(modelData)
+                  color: root.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WrapAnywhere
+                }
+              }
+              Text {
+                visible: root.shareConflict !== ""
+                width: parent.width
+                text: "A preset requested another theme. Your existing theme was kept; choose explicitly above."
+                color: root.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.WordWrap
+              }
+
+              Column {
+                visible: !!(engine.shareCatalog && engine.shareCatalog.currentExport.unavailable.length)
+                width: parent.width
+                spacing: Style.space(5)
+                PanelSectionHeader { text: "NO LONGER AVAILABLE"; foreground: root.foreground; fontFamily: root.fontFamily }
+                Text {
+                  width: parent.width
+                  text: "Acknowledge each item to remove its previous definition from the current export."
+                  color: root.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+                Repeater {
+                  model: engine.shareCatalog ? engine.shareCatalog.currentExport.unavailable : []
+                  ActionRow {
+                    required property var modelData
+                    width: parent.width
+                    rowId: "share-ack:" + modelData.id
+                    glyph: ""
+                    title: modelData.name
+                    subtitle: modelData.reason
+                    trailing: true
+                    trailingOn: root.shareAcknowledgements[modelData.id] === modelData.fingerprint
+                  }
+                }
+              }
+
+              ActionRow {
+                width: parent.width
+                rowId: "share-export"
+                glyph: ""
+                title: engine.busy && engine.busyAction === "share" ? "Exporting…" : "Export current loadout"
+                subtitle: root.selectedShareCount() === 0 ? "choose at least one resource"
+                  : (root.pendingWithdrawals().length > 0
+                      ? "acknowledge " + root.pendingWithdrawals().length + " unavailable resource(s)"
+                      : Model.plural(root.selectedShareCount(), "selected resource") + " · checked again before writing")
+                actionable: root.canExportShare()
+                primary: root.canExportShare()
+              }
+              ActionRow {
+                width: parent.width; rowId: "share-back"; glyph: ""
+                title: "Choose another starting point"; subtitle: "discard this in-memory selection"
+              }
+            }
+
             ActionRow {
               width: parent.width
               rowId: "copy"
@@ -704,7 +1106,7 @@ Panel {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onClicked: { root.tab = tabButton.tabId; root.cursor = 0; root.cursorActive = false }
+      onClicked: root.setTab(tabButton.tabId)
     }
 
     Text {
@@ -725,6 +1127,8 @@ Panel {
     property string subtitle: ""
     property bool trailing: false
     property bool trailingOn: false
+    property bool actionable: true
+    property bool primary: false
 
     hasCursor: root.hasCursor(actionRow.rowId)
     foreground: root.foreground
@@ -732,6 +1136,7 @@ Panel {
 
     MouseArea {
       anchors.fill: parent
+      enabled: actionRow.actionable
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
       onEntered: {
@@ -752,7 +1157,7 @@ Panel {
 
       Text {
         text: actionRow.glyph
-        color: root.foreground
+        color: actionRow.actionable ? (actionRow.primary ? root.accent : root.foreground) : root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.icon
         Layout.alignment: Qt.AlignVCenter
@@ -766,7 +1171,7 @@ Panel {
         Text {
           Layout.fillWidth: true
           text: actionRow.title
-          color: root.foreground
+          color: actionRow.actionable ? (actionRow.primary ? root.accent : root.foreground) : root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           elide: Text.ElideRight
@@ -784,6 +1189,7 @@ Panel {
 
       ToggleSwitch {
         visible: actionRow.trailing
+        enabled: actionRow.actionable
         checked: actionRow.trailingOn
         hasCursor: actionRow.hasCursor
         foreground: root.foreground

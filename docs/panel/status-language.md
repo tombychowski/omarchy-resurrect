@@ -46,6 +46,33 @@ The default threshold is 48 hours and the manifest permits a panel setting from 
 
 The Loadouts summary merges stored inventory with a live, read-only check and names how many are tracked and how many currently need attention. A malformed or unmatched result is **unavailable**, never zero. Resource detail uses missing/pending as attention, modified/conflicting/failed as warning, protected/present as healthy, and unverifiable/uncertain as unknown. Check and repair remain distinct: panel refresh never mutates the machine.
 
+## Share composer language
+
+- **All shareable resources** is the recommended simple starting choice.
+- **Current export** means the one profile currently authored in the selected
+  output repository. It does not mean an applied loadout.
+- **Applied loadout** means a local desired-state record used only to seed
+  currently healthy, definition-compatible selections.
+- **Not shareable** names a current candidate and explains why its safe schema-1
+  representation is unavailable; it is not silently hidden.
+- **No longer available** means a resource from the valid current export cannot
+  be preserved exactly from present machine state.
+- **Acknowledge ... to remove its previous definition** is the required wording
+  and consequence for withdrawing such an entry. An acknowledgement is not a
+  repair, deletion from the machine, or approval of a substitute definition.
+- **Choose at least one resource** explains why empty custom export is disabled.
+- **Theme kept; choose another theme explicitly** reports an additive-preset
+  conflict without silently replacing the user's existing theme.
+- **Selecting one that is shareable exports this machine's current definition,
+  not the applied snapshot** explains the replacement when a modified preset
+  resource remains independently selectable from the current machine.
+
+Loading and unavailable are distinct. A missing current export disables that
+single starting choice; malformed applied preset state disables presets; an
+invalid complete catalog disables composition. A CLI refusal after activation
+is **finished with problems**, never `Loadout exported`, and triggers refreshed
+authoritative state for review.
+
 ## Protocol mapping
 
 The panel consumes the following porcelain states:
@@ -65,7 +92,7 @@ The panel consumes the following porcelain states:
 
 If `ress status --json` cannot be parsed, `Service.qml` sets its accepted status object to `null`. Status-dependent summaries are withheld. The panel does not inspect the vault to fill the gap and does not show zero counts as though they came from the CLI.
 
-The same rule applies independently to loadout-list JSON. A valid backup status can coexist with unavailable loadout state and vice versa.
+The same rule applies independently to loadout-list and share-catalog JSON. A valid backup status can coexist with unavailable loadout or composer state and vice versa. Within a valid share catalog, current-export and preset availability remain independent.
 
 This is a refusal to fabricate state, not a claim that the vault is empty. Operation stderr and exit failures continue to use the failure language above.
 

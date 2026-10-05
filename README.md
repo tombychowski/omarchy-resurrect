@@ -159,6 +159,8 @@ repos, web app URLs, a theme name. That is the entire format.
 
 ```bash
 ress share                                  # writes profile.json, prints your link
+ress share catalog --json                   # inspect safe composition choices
+ress share --custom --select package:fd     # export an exact non-empty subset
 ress apply ress.sh/gh/someone/their-loadout # become someone else's setup
 ress loadout list                           # see desired state on this machine
 ```
@@ -170,6 +172,12 @@ ress loadout list                           # see desired state on this machine
 
 `ress apply` shows you **everything** it would install — every package, every
 plugin, every web app — and installs nothing until you say yes:
+
+The Share tab makes the simple path one choice—**All shareable resources**—and
+also supports starting from the current export, an empty selection, or a
+healthy subset of an applied loadout. You can then search and toggle individual
+resources, edit the name and description, and choose one theme. It updates one
+current profile; it is not an authored-loadout library.
 
 ```
 Test Rig — by someone
@@ -226,6 +234,10 @@ keyboard-driveable:
 | `Enter` / `Space` | activate |
 | `Esc` | close |
 
+Inside a Share text field, `Esc` returns to panel navigation. `Enter` opens
+metadata/search fields and activates starting choices, resource toggles,
+withdrawal acknowledgements, and export.
+
 Bind it if you like:
 
 ```lua
@@ -246,7 +258,11 @@ ress restore [--from URL] [--only LIST]     replay a vault, resumably
               [--skip LIST] [--dry-run] [--restart]
               [--aur|--no-aur|--review-aur]
               [--enable-units|--no-enable-units]
-ress share [--name NAME] [--description T]  export a shareable loadout
+ress share [--name NAME] [--description T] [--out DIR]
+                                            export all shareable resources
+ress share catalog --json [--out DIR]       inspect composer choices
+ress share --custom --select ID...          export an exact subset; optional:
+  [--acknowledge-unavailable ID FINGERPRINT]
 ress apply <link> [--dry-run]               install someone else's loadout
 ress loadout <list|show|check|repair|update|remove>
                                             inspect and manage applied loadouts

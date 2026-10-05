@@ -44,6 +44,9 @@ Item {
   property var loadoutHealth: null
   property bool loadoutsAvailable: false
   property bool loadingLoadouts: false
+  property var shareCatalog: null
+  property bool shareCatalogAvailable: false
+  property bool loadingShareCatalog: false
 
   property bool busy: false
   readonly property bool anyBusy: busy || externallyBusy
@@ -180,6 +183,33 @@ Item {
 
   function backupNow()  { return run(["backup"], "backup") }
   function shareNow()   { return run(["share"], "share") }
+
+  // Called by the panel only when Share becomes the active workflow. The
+  // service does not prefetch this potentially large machine inventory for
+  // the headless scheduler or for the other tabs.
+  function refreshShareCatalog() {
+    if (shareCatalogProc.running) return false
+    loadingShareCatalog = true
+    shareCatalogProc.running = true
+    return true
+  }
+
+  function shareCustom(name, description, ids, acknowledgements) {
+    var selected = (ids || []).slice().sort()
+    var args = ["share", "--custom", "--name", String(name || ""),
+                "--description", String(description || "")]
+    for (var i = 0; i < selected.length; i++)
+      args = args.concat(["--select", selected[i]])
+    var acknowledged = []
+    for (var id in (acknowledgements || {})) acknowledged.push(id)
+    acknowledged.sort()
+    for (var j = 0; j < acknowledged.length; j++) {
+      var resourceId = acknowledged[j]
+      args = args.concat(["--acknowledge-unavailable", resourceId,
+                          acknowledgements[resourceId]])
+    }
+    return run(args, "share")
+  }
   function refresh() {
     if (!statusProc.running) { loadingStatus = true; statusProc.running = true }
     refreshLoadouts()
@@ -274,7 +304,35 @@ Item {
       root.currentStep = exitCode === 0 ? "" : root.currentStep
       if (exitCode !== 0 && !root.lastError) root.lastError = "exited with code " + exitCode
       root.finished(root.busyAction, root.lastResult || (exitCode === 0 ? "ok" : "fail"))
+      if (root.busyAction === "share") root.refreshShareCatalog()
       root.refresh()
+    }
+  }
+
+  Process {
+    id: shareCatalogProc
+    running: false
+    command: [root.cli, "share", "catalog", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.loadingShareCatalog = false
+        try {
+          var parsed = Model.parseShareCatalog(JSON.parse(text || "{}"))
+          root.shareCatalog = parsed
+          root.shareCatalogAvailable = parsed !== null
+        } catch (e) {
+          root.shareCatalog = null
+          root.shareCatalogAvailable = false
+        }
+      }
+    }
+    onExited: function(exitCode) {
+      root.loadingShareCatalog = false
+      if (exitCode !== 0) {
+        root.shareCatalog = null
+        root.shareCatalogAvailable = false
+      }
     }
   }
 

@@ -182,6 +182,86 @@ The matched secret is never present. Exit status is zero for no findings and non
 
 Loadout mutations use the same porcelain record grammar as restore. A fully healthy apply ends with `DONE|ok|...`; deferred, failed, conflicting, or uncertain work ends with `DONE|partial|...` and a non-zero status. Consumers must not reinterpret warning prose as success.
 
+### `ress share catalog --json [--out DIR]`
+
+The share catalog is the complete local discovery boundary for a loadout
+composer. It returns exactly one schema-versioned object. `--out` selects which
+current exported profile is compared; it does not change any files.
+
+```json
+{
+  "schemaVersion": 1,
+  "resources": [{
+    "id": "package:fd",
+    "kind": "package",
+    "name": "fd",
+    "shareable": true,
+    "reasonCode": "",
+    "reason": "",
+    "channels": ["native"],
+    "active": false
+  }],
+  "currentExport": {
+    "state": "valid",
+    "name": "Small setup",
+    "description": "Tools I use",
+    "resourceIds": ["package:fd"],
+    "unavailable": [{
+      "id": "plugin:old",
+      "kind": "plugin",
+      "name": "old",
+      "reasonCode": "missing",
+      "reason": "resource is not present on this machine",
+      "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }]
+  },
+  "presets": {
+    "state": "valid",
+    "loadouts": [{
+      "id": "work-a1b2c3",
+      "name": "Work",
+      "resourceIds": ["package:fd"],
+      "warnings": [{"id": "plugin:old", "state": "missing"}]
+    }]
+  },
+  "counts": {"package": 1},
+  "limits": {"themes": 1}
+}
+```
+
+Resource kinds are `package`, `plugin`, `webapp`, and `theme`. Stable
+shareable identities are `package:<name>`, `plugin:<id>`, `webapp:<name>`, and
+`theme-install:<name>`. An item without a safe logical identity receives an
+opaque `unavailable:<kind>:<digest>` identity only so the panel can explain it;
+that identity can never be selected. Package `channels` contains `native`,
+`aur`, or both. `active` is meaningful for theme presentation.
+
+Candidate refusal codes are bounded to `missing-manifest`, `unsafe-id`,
+`missing-remote`, `unsafe-remote`, `unpinned`, `unsupported-launcher`,
+`unsafe-name`, `unsafe-icon`, `local-only`, and `missing-theme`. A valid current
+export can additionally report `missing` or `definition-mismatch`. An invalid
+current profile uses state `unavailable` with `invalid-profile`; no profile uses
+state `absent`. Applied presets independently use `valid` or `unavailable`,
+with `invalid-registry` for malformed local state. Preset warning states are
+live resource or claim classifications and are display information, not
+deletion authority.
+
+Unavailable current-export fingerprints bind the stable identity to the
+canonical prior profile definition. They are staleness tokens used by selective
+export, not secrets or general authorization.
+
+Selective porcelain export emits `BEGIN|share|<output>` and the normal Share
+step records. Success ends with `DONE|ok|<output>`. A selected identity that is
+missing or no longer shareable, an acknowledgement-required withdrawal, a stale
+fingerprint, invalid metadata, or a cardinality violation ends non-zero with
+`DONE|fail|<reason>`; the reason names the affected logical identity when one is
+known. Explanatory prose remains on stderr, never mixed into stdout.
+
+The catalog intentionally omits resource definitions, commands, file content,
+URL credentials, registry cleanup policy, ownership evidence, and claims. It
+does not perform network discovery. Optional current-export and preset failures
+do not erase an otherwise valid machine inventory.
+
 ## stderr and failures
 
 Consumers should collect stderr separately. Porcelain/JSON stdout must remain parseable, but an early `die` path can explain invalid usage, missing dependencies, unsafe input, or an unavailable vault through stderr and non-zero exit.
@@ -199,4 +279,7 @@ Within a supported schema generation:
 - consumers do not parse message prose to make safety decisions; and
 - behavior changes to required records, field meaning, or types require an OpenSpec and contract update with consumer tests.
 
-Protocol tests live in `tests/cases/12-porcelain.sh` and `28-tracked-apply.sh`; JSON behavior in `tests/cases/08-verify.sh`, `19-status-config.sh`, `27-loadout-query.sh`, and `29-loadout-check.sh`; parser behavior lives in `tests/model-test.js`.
+Protocol tests live in `tests/cases/12-porcelain.sh`, `28-tracked-apply.sh`, and
+`40-share-compose.sh`; JSON behavior in `tests/cases/08-verify.sh`,
+`19-status-config.sh`, `27-loadout-query.sh`, `29-loadout-check.sh`, and
+`40-share-compose.sh`; parser behavior lives in `tests/model-test.js`.

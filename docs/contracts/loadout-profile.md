@@ -66,7 +66,55 @@ Unknown fields do not grant new behavior. Apply reads only the fixed supported f
 - web apps include only a name, HTTPS URL, and icon identifier that the profile can represent;
 - the current theme includes its name and, when available and safe, its repository remote and commit.
 
+The ordinary `ress share` invocation retains this whole-machine behavior: it
+exports every shareable package, plugin, and web app plus the active shareable
+theme. The profile still represents at most one theme.
+
+Selective export uses the same collectors and schema:
+
+```bash
+ress share --custom \
+  --name "Small setup" --description "Only the essentials" \
+  --select package:fd \
+  --select plugin:example.widget \
+  --select theme-install:nord
+```
+
+`--custom` requires a non-empty set of unique, currently shareable logical
+identities and allows no more than one theme. `--select` and
+`--acknowledge-unavailable` are invalid without it. Names contain 1–120
+display-safe characters; descriptions contain at most 1,000 display-safe
+characters. Control characters are refused.
+
+Before writing, selective export takes a lock scoped to the canonical output
+directory, reinspects the current machine, validates the current profile and
+metadata, resolves every selected identity to its current safe definition, and
+renders the complete profile and README in a sibling temporary directory. A
+validation refusal leaves the generated files, Git index/history and remote,
+and configured `PROFILE_URL` unchanged. Existing Git and `--out` behavior is
+otherwise retained.
+
+If an entry in a valid current export is now missing, unsafe, or definition
+mismatched, omission requires the exact catalog acknowledgement:
+
+```bash
+ress share --custom --select package:fd \
+  --acknowledge-unavailable plugin:old <catalog-fingerprint>
+```
+
+The CLI rereads the current profile and compares both identity and fingerprint.
+A changed or stale acknowledgement is refused. Deliberately deselecting a still
+available resource requires no acknowledgement. A malformed current profile is
+not treated as an empty export and cannot be selectively replaced.
+
 Web-app launchers with browser flags, multiple executable entries, or other unsupported forms are omitted and reported. Local-only or unsafe Git remotes are not converted into fetchable code references. No `$HOME` content is embedded.
+
+`ress share catalog --json [--out DIR]` exposes safe identities and omission
+reasons for composition without exposing the definitions themselves. Its exact
+shape and confidentiality boundary are defined in the
+[CLI protocol](cli-protocol.md). Applied loadouts may seed identities only when
+their stored definitions match healthy current resources; their metadata,
+ownership, cleanup policy, and claims never enter the public profile.
 
 ## Accepted sources
 
