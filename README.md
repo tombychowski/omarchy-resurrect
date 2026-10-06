@@ -633,9 +633,12 @@ git clean -fd                          # then remove it (.gitignore'd files are 
 omarchy plugin update tsouth89.resurrect
 ```
 
-The CLI (`bin/ress`) is the whole engine and has no QML dependency — it runs
-from a TTY on a machine with no desktop. `Panel.qml` and `Service.qml` are a
-face on top of it, and every button is one subcommand with `--porcelain`.
+The CLI (`bin/ress` plus its sourced modules under `lib/ress/`) is the whole
+engine and has no QML dependency — it runs from a TTY on a machine with no
+desktop. `bin/ress` remains the only public executable. `Panel.qml` and
+`Service.qml` are a face on top of the CLI, and every button is one subcommand
+with `--porcelain`. The [CLI module architecture](docs/architecture/cli-modules.md)
+maps file ownership and explains how to extend it.
 
 ```bash
 ./tests/run.sh              # every case
@@ -645,8 +648,10 @@ face on top of it, and every button is one subcommand with `--porcelain`.
 
 Every push and pull request runs the suite on GitHub Actions
 (`.github/workflows/tests.yml`), along with the manifest check and `Model.js` on
-its own. The mutation sweep is weekly (`.github/workflows/mutations.yml`),
-because it takes tens of minutes: it runs the whole suite once per mutation.
+its own. The mutation sweep is weekly (`.github/workflows/mutations.yml`)
+because it is broader than the ordinary suite: it proves one clean full-suite
+baseline, then checks every injected fault against its explicitly owned detector
+case.
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 

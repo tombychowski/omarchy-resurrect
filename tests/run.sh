@@ -25,10 +25,20 @@ for arg in "$@"; do
 done
 
 # Syntax first: a parse error makes every case fail in the same confusing way.
-if ! bash -n "$REPO_DIR/bin/ress"; then
-  printf '\e[31mbin/ress does not parse.\e[0m\n' >&2
-  exit 1
+# Keep this inventory filesystem-based so newly extracted modules are checked
+# before they have been committed.
+production_files=("$REPO_DIR/bin/ress")
+if [[ -d $REPO_DIR/lib/ress ]]; then
+  while IFS= read -r file; do production_files+=("$file"); done < <(
+    find "$REPO_DIR/lib/ress" -type f -name '*.sh' -print | sort
+  )
 fi
+for file in "${production_files[@]}"; do
+  if ! bash -n "$file"; then
+    printf '\e[31m%s does not parse.\e[0m\n' "${file#"$REPO_DIR/"}" >&2
+    exit 1
+  fi
+done
 
 total=0; failed=0; assertions=0
 started=$SECONDS

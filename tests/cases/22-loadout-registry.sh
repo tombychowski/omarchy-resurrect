@@ -53,7 +53,9 @@ assert_fails "duplicate resource identity is refused"
 
 cp "$SANDBOX/valid-registry.json" "$REGISTRY"
 jq '.resources[0].name="../../etc" | .resources[0].id="package:../../etc" |
-  .claims[0].resourceId="package:../../etc"' "$REGISTRY" >"$SANDBOX/bad.json" && mv "$SANDBOX/bad.json" "$REGISTRY"
+  .resources[0].definition.name="../../etc" |
+  .claims[0].resourceId="package:../../etc" | .claims[0].requested.name="../../etc"' \
+  "$REGISTRY" >"$SANDBOX/bad.json" && mv "$SANDBOX/bad.json" "$REGISTRY"
 ress loadout remove --yes "$LOADOUT_ID"
 assert_fails "path-shaped hostile identity cannot authorize deletion"
 assert_not_called "pacman -R" "hostile registry invokes no package removal"

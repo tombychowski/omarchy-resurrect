@@ -4,11 +4,21 @@ ress is a Bash CLI with a small QML panel and headless scheduling service. The C
 
 ## Components
 
-### `bin/ress`
+### CLI: `bin/ress` and `lib/ress/`
 
-The CLI implements capture, restore, loadout sharing/application and lifecycle management, verification, credential scanning, configuration, status, and supporting commands. It owns input validation, resource inspection, consent gates, locking, persistent progress, vault and registry formats, cleanup adapters, and consumer output.
+The CLI is one Bash program: `bin/ress` is its only executable entrypoint and
+loads the implementation modules under `lib/ress/` into the same process. It
+implements capture, restore, loadout sharing/application and lifecycle
+management, verification, credential scanning, configuration, status, and
+supporting commands. Together, the entrypoint and modules own input validation,
+resource inspection, consent gates, locking, persistent progress, vault and
+registry formats, cleanup adapters, and consumer output. See the
+[CLI module architecture](cli-modules.md) for file ownership and extension
+guidance.
 
-The CLI is the only component that reads or writes the vault as product state. Human output explains decisions; JSON and porcelain output serve automation and the panel.
+The internal file split does not change the consumer boundary: the CLI is the
+only component that reads or writes the vault as product state. Human output
+explains decisions; JSON and porcelain output serve automation and the panel.
 
 ### `Service.qml`
 

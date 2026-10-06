@@ -11,6 +11,7 @@ For installation and the most common commands, start with the [README](../README
 - [Vision](vision/vision.md) — the problem ress exists to solve, its audience, boundaries, and direction.
 - [Principles](vision/principles.md) — durable constraints used to evaluate changes.
 - [System overview](architecture/system-overview.md) — components, data flow, persistent state, and trust boundaries.
+- [CLI module architecture](architecture/cli-modules.md) — entrypoint loading, file ownership, dependency direction, shared state, and extension guidance.
 
 ### Work with exact interfaces
 

@@ -30,10 +30,18 @@ to a local path, but only for `clone`, `fetch`, `pull`, `push` and `ls-remote`.
 Rewriting globally would make capture record a `/tmp` path and restore then
 refuse it as an unsafe remote — an artefact of the test rather than of ress.
 
+Before any case runs, `tests/run.sh` syntax-checks the complete production Bash
+inventory: the public `bin/ress` entrypoint and every `.sh` file present below
+`lib/ress/`. The directory is conditional so this gate also works while a
+single-file checkout is being migrated, but once modules exist a parse error in
+any one names that exact repository-relative file and stops the run. Cases still
+invoke only `bin/ress`; sourced modules are implementation, not extra command
+surfaces.
+
 ## 2. Mutation testing
 
 ```bash
-./tests/mutate.sh           # multi-hour currently; every mutation runs the whole suite
+./tests/mutate.sh           # full clean baseline, then one detector per mutation
 ```
 
 A passing suite says the tests agree with the code, not that they would notice
@@ -43,15 +51,37 @@ finds anything, `verify` always says the machine matches, `plain()` stops
 stripping control characters — and reports any mutation no test caught.
 
 Run it when you change what the tests are *for*, not on every edit. A `SURVIVED`
-line is a feature the suite only appears to cover. The historical 12-minute
-estimate no longer applies: the applied-loadout cases substantially expanded
-the suite, and the serial runner still executes every case for every mutation.
+line is a feature the suite only appears to cover. The runner first executes the
+complete suite once, then runs one explicitly mapped detector case against each
+mutation. Repeating unrelated integration cases for every mutation adds no
+mutation evidence: a mutation is caught when its designated case goes red.
 
 It runs the suite once before breaking anything, and refuses to report on
 mutations when that baseline does not pass: a case that is already red counts as
 a catch for every mutation, so a run on a red suite is a clean sweep over tests
 that are not passing. `tests/cases/20-mutation-baseline.sh` covers both halves of
-that gate.
+that gate. Its baseline filter is accepted only with the sentinel filter that
+selects no mutations; a real full or name-filtered mutation run cannot narrow
+the clean baseline.
+
+Every mutation names its repository-relative production file explicitly. The
+runner refuses a missing target and an anchor that is absent or appears more
+than once, then syntax-checks `bin/ress` and all `lib/ress/**/*.sh` files in the
+mutated copy before running the mapped detector. `MUTATION_CASE` in
+`tests/mutate.sh` makes detector ownership explicit and treats a missing mapping
+or case as skipped evidence, which fails the sweep. When a function moves
+between modules, moving its mutation target is part of the same refactor;
+leaving the mutation pointed at the old monolith must fail rather than quietly
+reduce coverage. A focused mutation can be selected by name, for example:
+
+```bash
+./tests/mutate.sh share-hides-unshareable
+```
+
+Splitting the CLI into sourced files does not change what these automated
+layers can prove. Test doubles still model package, service, network, Git, and
+Omarchy command boundaries; real side effects and rendered desktop behavior
+remain the responsibility of the scratch-machine and VM layers below.
 
 ## 3. The QML half
 
