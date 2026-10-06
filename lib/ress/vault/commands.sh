@@ -12,12 +12,11 @@ cmd_status() {
   [[ ${1:-} == --json ]] && as_json=1
   resolve_vault
 
-  local last=0 commits=0 dirty=0 ahead=0 has_vault=0
+  local last=0 commits=0 ahead=0 has_vault=0
   [[ -f $STATE_DIR/last-backup ]] && last=$(json_number "$(<"$STATE_DIR/last-backup")")
   if has_manifest; then
     has_vault=1
     commits=$(json_number "$(git_vault rev-list --count HEAD 2>/dev/null || echo 0)")
-    git_vault diff --quiet 2>/dev/null || dirty=1
     ahead=$(json_number "$(git_vault rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)")
   fi
 
@@ -39,21 +38,21 @@ cmd_status() {
       --argjson lastBackup "$last" \
       --argjson commits "$commits" \
       --argjson unpushed "$ahead" \
-      --argjson autoBackup "$( [[ ${CFG[AUTO_BACKUP]:-off} == on ]] && echo true || echo false )" \
-      --argjson intervalHours "$(json_number "${CFG[AUTO_INTERVAL_HOURS]:-24}" 24)" \
+      --argjson autoBackup "$(config_status_onoff AUTO_BACKUP)" \
+      --argjson intervalHours "$(config_status_number AUTO_INTERVAL_HOURS)" \
       --argjson categories "$(jq -n \
-        --argjson packages "$(json_flag "${CFG[INCLUDE_PACKAGES]:-0}")" \
-        --argjson config "$(json_flag "${CFG[INCLUDE_CONFIG]:-0}")" \
-        --argjson omarchy "$(json_flag "${CFG[INCLUDE_OMARCHY]:-0}")" \
-        --argjson webapps "$(json_flag "${CFG[INCLUDE_WEBAPPS]:-0}")" \
-        --argjson plugins "$(json_flag "${CFG[INCLUDE_PLUGINS]:-0}")" \
-        --argjson secrets "$(json_flag "${CFG[INCLUDE_SECRETS]:-0}")" \
+        --argjson packages "$(config_status_flag INCLUDE_PACKAGES)" \
+        --argjson config "$(config_status_flag INCLUDE_CONFIG)" \
+        --argjson omarchy "$(config_status_flag INCLUDE_OMARCHY)" \
+        --argjson webapps "$(config_status_flag INCLUDE_WEBAPPS)" \
+        --argjson plugins "$(config_status_flag INCLUDE_PLUGINS)" \
+        --argjson secrets "$(config_status_flag INCLUDE_SECRETS)" \
         '$ARGS.named')" \
       --argjson settings "$(jq -n \
         --arg aur "${CFG[AUR]}" \
         --arg enableUnits "${CFG[ENABLE_UNITS]}" \
         --arg secretScan "${CFG[SECRET_SCAN]}" \
-        --argjson captureAutostart "$(json_flag "${CFG[CAPTURE_AUTOSTART]:-0}")" \
+        --argjson captureAutostart "$(config_status_flag CAPTURE_AUTOSTART)" \
         '$ARGS.named')" \
       --argjson manifest "$(manifest_json)" \
       --argjson loadouts "$loadout_summary" \
@@ -107,7 +106,7 @@ cmd_init() {
   resolve_vault
   ensure_vault_repo
   CFG[VAULT]="$VAULT"
-  [[ -n $remote ]] && CFG[REMOTE]="$remote"
+  [[ -n $remote ]] && CFG[REMOTE]="$(strip_credentials "$remote")"
   save_config
   private_dir "$CONFIG_DIR"
   [[ -f $CONFIG_DIR/include ]] || printf '%s\n' \
@@ -116,47 +115,24 @@ cmd_init() {
   [[ -f $CONFIG_DIR/exclude ]] || printf '%s\n' \
     "# Extra rsync patterns to leave out of every capture." >"$CONFIG_DIR/exclude"
   printf 'Vault ready at %s\n' "$VAULT"
-  [[ -n $remote ]] && printf 'Remote set to %s\n' "$remote"
+  [[ -n $remote ]] && printf 'Remote set to %s\n' "$(strip_credentials "$remote")"
   printf 'Run: ress backup\n'
 }
-
-# Settings whose value is a choice rather than free text. A misspelled choice
-# used to be accepted and then silently read as the default — so `AUR=yse` meant
-# "ask", and you found out the next time a restore stopped to ask you.
-declare -A CFG_CHOICES=(
-  [AUR]="ask yes no"
-  [ENABLE_UNITS]="ask yes no"
-  [SECRET_SCAN]="warn block off"
-  [AUTO_BACKUP]="on off"
-  [AUTO_PUSH]="0 1"
-  [CAPTURE_AUTOSTART]="0 1"
-  [INCLUDE_PACKAGES]="0 1"
-  [INCLUDE_CONFIG]="0 1"
-  [INCLUDE_OMARCHY]="0 1"
-  [INCLUDE_WEBAPPS]="0 1"
-  [INCLUDE_PLUGINS]="0 1"
-  [INCLUDE_SECRETS]="0 1"
-  [SECRETS_MODE]="passphrase recipient"
-)
 
 cmd_set() {
   (( $# > 0 )) || die "usage: ress set KEY=VALUE [KEY=VALUE...]"
   # Validated in full before anything is written, so a run that is going to be
   # refused is refused without having changed half the settings first.
-  local pair key value choice ok keys=() values=()
+  local pair key value keys=() values=()
   for pair in "$@"; do
     [[ $pair == *=* ]] || die "expected KEY=VALUE, got: $pair"
     key="${pair%%=*}"; value="${pair#*=}"
     key=$(printf '%s' "$key" | tr '[:lower:]-' '[:upper:]_')
-    [[ -v CFG[$key] ]] || die "unknown setting: $key"
-    if [[ -v CFG_CHOICES[$key] ]]; then
-      ok=0
-      for choice in ${CFG_CHOICES[$key]}; do [[ $value == "$choice" ]] && ok=1; done
-      (( ok )) || die "$key must be one of: ${CFG_CHOICES[$key]} (got: $value)"
-    fi
-    [[ $key == VAULT && -z $value ]] && die "VAULT cannot be empty"
-    [[ $key == AUTO_INTERVAL_HOURS && ! $value =~ ^[0-9]+$ ]] &&
-      die "AUTO_INTERVAL_HOURS must be a whole number of hours (got: $value)"
+    [[ -v CONFIG_DEFAULTS[$key] ]] || die "unknown setting: $key"
+    case "$key" in
+      REMOTE|PROFILE_URL) value=$(strip_credentials "$value") ;;
+    esac
+    config_validate_value "$key" "$value"
     keys+=("$key"); values+=("$value")
   done
 
@@ -298,7 +274,9 @@ cmd_diff_stock() {
   resolve_vault
   # No RETURN trap here: it would fire after `stock` has left scope, and under
   # `set -u` that turns a clean run into an unbound-variable error.
-  local stock; stock=$(mktemp)
+  local stock
+  ress_make_temp_file || die "could not create diff workspace"
+  stock="$RESS_TEMP_PATH"
   if ! stock_packages >"$stock"; then
     rm -f "$stock"
     die "no Omarchy package manifest on this machine (expected ${STOCK_LISTS[0]})"
@@ -368,7 +346,8 @@ cmd_diff() {
   [[ -d $VAULT/.git ]] || die "no vault at $VAULT"
 
   local now added="" removed="" dirty
-  now=$(mktemp)
+  ress_make_temp_file || die "could not create diff workspace"
+  now="$RESS_TEMP_PATH"
   pacman -Qqen | sort >"$now"
   if [[ -f $VAULT/packages/native.txt ]]; then
     added=$(comm -23 "$now" <(sort -u "$VAULT/packages/native.txt") || true)

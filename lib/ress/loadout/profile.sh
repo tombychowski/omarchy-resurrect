@@ -11,19 +11,29 @@ APPLY_WORK=""
 # ------------------------------------------------------------------- apply
 
 fetch_profile() {
-  local source="$1" dest="$2"
-  if [[ -f $source ]]; then
-    cp "$source" "$dest/profile.json"
-  elif [[ -d $source && -f $source/profile.json ]]; then
-    cp "$source/profile.json" "$dest/profile.json"
+  local source="$1" dest="$2" control="" display_source
+  display_source=$(strip_credentials "$source")
+  if [[ -e $source || -L $source ]]; then
+    if [[ -d $source && ! -L $source ]]; then
+      control=$(safe_control_file "$source" profile.json) ||
+        die "profile.json must be a contained regular file"
+    else
+      control=$(safe_control_file "$(dirname "$source")" "$(basename "$source")") ||
+        die "profile source must be a contained regular file"
+    fi
+    cp "$control" "$dest/profile.json"
   elif [[ $source == *.json ]]; then
     valid_https "$source" || die "profile URLs must be https"
-    curl -fsSL --max-time 20 -o "$dest/profile.json" -- "$source" || die "could not fetch $source"
+    curl -fsSL --max-time 20 -o "$dest/profile.json" -- "$source" ||
+      die "could not fetch $display_source"
   else
     valid_https "$source" || die "profile URLs must be https"
-    git clone -q --depth 1 -- "$source" "$dest/repo" 2>/dev/null || die "could not clone $source"
-    [[ -f $dest/repo/profile.json ]] || die "no profile.json at the root of $source"
-    cp "$dest/repo/profile.json" "$dest/profile.json"
+    git clone -q --depth 1 -- "$source" "$dest/repo" 2>/dev/null ||
+      die "could not clone $display_source"
+    git -C "$dest/repo" remote set-url origin "$display_source" 2>/dev/null || true
+    control=$(safe_control_file "$dest/repo" profile.json) ||
+      die "profile.json must be a contained regular file"
+    cp "$control" "$dest/profile.json"
   fi
   jq -e . "$dest/profile.json" >/dev/null 2>&1 || die "profile.json is not valid JSON"
   local schema kind
@@ -52,6 +62,10 @@ normalize_profile() {
   local value id url sha label icon
   NORMALIZE_REFUSED_PACKAGES=0
   NORMALIZE_REFUSED_INTEGRATIONS=0
+  while IFS= read -r url; do
+    url_has_credentials "$url" &&
+      die "loadout contains a credential-bearing web app URL"
+  done < <(jq -r '.webapps[]?.url // empty' "$input")
   while IFS= read -r value; do
     if valid_pkg "$value"; then native+=("$value"); else NORMALIZE_REFUSED_PACKAGES=$((NORMALIZE_REFUSED_PACKAGES + 1)); fi
   done \
@@ -70,7 +84,7 @@ normalize_profile() {
   done < <(jq -r '.plugins[]? | [.id, .url, (.commit // "")] | @tsv' "$input")
   while IFS=$'\t' read -r label url icon; do
     [[ -n $label ]] || continue
-    if ! valid_label "$label" || ! valid_https "$url"; then
+    if ! valid_label "$label" || ! valid_public_https "$url"; then
       NORMALIZE_REFUSED_INTEGRATIONS=$((NORMALIZE_REFUSED_INTEGRATIONS + 1)); continue
     fi
     valid_icon "$icon" || icon=""

@@ -44,7 +44,7 @@ export RESS_MUTATION_RUN=1
 printf 'Baseline\n'
 baseline_args=()
 [[ -z $BASELINE_FILTER ]] || baseline_args+=("$BASELINE_FILTER")
-baseline=$(cd "$SRC" && ./tests/run.sh "${baseline_args[@]}" 2>&1)
+baseline=$(cd "$SRC" && ./tests/run.sh --jobs "${RESS_TEST_JOBS:-4}" "${baseline_args[@]}" 2>&1)
 if ! grep -q 'cases passed' <<<"$baseline"; then
   printf '\e[31m  The suite does not pass on its own, so every mutation would look caught.\e[0m\n'
   # The failing cases, and then the assertions inside them. The case lines carry
@@ -86,6 +86,8 @@ declare -A MUTATION_CASE=(
   [progress-not-scoped]=11-empty
   [category-not-validated]=11-empty
   [dryrun-writes-state]=06-dry-run
+  [operation-dryrun-marker]=23-loadout-lock
+  [operation-marker-token-ignored]=23-loadout-lock
   [first-contact-never]=04-first-contact
   [source-scheme-ignored]=17-ssh-source
   [schema-unvalidated]=14-hostile-vault
@@ -108,6 +110,11 @@ declare -A MUTATION_CASE=(
   [autostart-always]=09-autostart
   [settings-unvalidated]=13-settings
   [config-no-lock]=13-settings
+  [operation-config-lock-timeout-ignored]=42-config-lock
+  [security-init-remote-unsanitized]=43-url-credentials
+  [security-profile-webapp-credential-accepted]=43-url-credentials
+  [security-vault-scan-narrowed]=07-secret-scan
+  [security-control-symlink-followed]=44-untrusted-controls
   [status-json-raw-config]=19-status-config
   [status-manifest-unchecked]=19-status-config
   [loadout-registry-schema-ignored]=22-loadout-registry
@@ -126,6 +133,7 @@ declare -A MUTATION_CASE=(
   [share-skips-withdrawal-ack]=40-share-compose
   [share-allows-many-themes]=40-share-compose
   [porcelain-prose]=12-porcelain
+  [cleanup-containment-removed]=45-cleanup-registry
 )
 
 run_mutation() {
@@ -194,17 +202,17 @@ PY
 
 # ---- the two consent gates ------------------------------------------------
 
-run_mutation aur-always-builds lib/ress/vault/restore.sh \
+run_mutation aur-always-builds lib/ress/machine/packages.sh \
   '  AUR_KEPT=()
   AUR_MODE="skip"' \
   '  AUR_KEPT=()
   AUR_MODE="build"'
 
-run_mutation aur-ignores-flag lib/ress/vault/restore.sh \
+run_mutation aur-ignores-flag lib/ress/machine/packages.sh \
   'local decision="${AUR_CHOICE:-}"' \
   'local decision="yes"'
 
-run_mutation aur-ignores-denylist lib/ress/vault/restore.sh \
+run_mutation aur-ignores-denylist lib/ress/machine/packages.sh \
   'aur_denied() { merged_list aur-deny | grep -qxF -- "$1"; }' \
   'aur_denied() { return 1; }'
 
@@ -250,8 +258,8 @@ run_mutation verify-ignores-packages lib/ress/vault/verify.sh \
 # ---- the vault format -----------------------------------------------------
 
 run_mutation manifest-no-legacy lib/ress/vault/common.sh \
-  '[[ -f $VAULT/$VAULT_MANIFEST_LEGACY ]] && { printf '"'"'%s'"'"' "$VAULT/$VAULT_MANIFEST_LEGACY"; return 0; }' \
-  ':'
+  'if [[ -e $VAULT/$VAULT_MANIFEST_LEGACY || -L $VAULT/$VAULT_MANIFEST_LEGACY ]]; then' \
+  'if false; then'
 
 run_mutation bak-suffix-old lib/ress/core.sh \
   'BAK_SUFFIX=".ress-bak"' \
@@ -276,6 +284,14 @@ run_mutation dryrun-writes-state lib/ress/vault/restore.sh \
     (( restart )) && rm -f "$RESTORE_STATE"' \
   'if (( 1 )); then
     (( restart )) && rm -f "$RESTORE_STATE"'
+
+run_mutation operation-dryrun-marker lib/ress/core.sh \
+  'if (( ! DRY_RUN )); then' \
+  'if (( 1 )); then'
+
+run_mutation operation-marker-token-ignored lib/ress/core.sh \
+  'if [[ $marker_token == "$RUNNING_MARKER_TOKEN" ]]; then' \
+  'if [[ -n $marker_token ]]; then'
 
 run_mutation first-contact-never lib/ress/vault/restore.sh \
   'same_remote "$from" "$(normalize_source "${CFG[REMOTE]:-}")" || FIRST_CONTACT=1' \
@@ -376,18 +392,40 @@ run_mutation autostart-always lib/ress/vault/backup.sh \
   '[[ -d $HOME/.config/autostart ]]'
 
 run_mutation settings-unvalidated lib/ress/vault/commands.sh \
-  'if [[ -v CFG_CHOICES[$key] ]]; then' \
-  'if false; then'
+  '    config_validate_value "$key" "$value"' \
+  '    :'
 
 run_mutation config-no-lock lib/ress/vault/commands.sh \
   'take_config_lock
   load_config' \
   ':'
 
+run_mutation operation-config-lock-timeout-ignored lib/ress/core.sh \
+  'flock -w 5 8 || die "configuration is busy; try again"' \
+  'flock -w 5 8 || true'
+
+run_mutation security-init-remote-unsanitized lib/ress/vault/commands.sh \
+  '[[ -n $remote ]] && CFG[REMOTE]="$(strip_credentials "$remote")"' \
+  '[[ -n $remote ]] && CFG[REMOTE]="$remote"'
+
+run_mutation security-profile-webapp-credential-accepted lib/ress/loadout/profile.sh \
+  'url_has_credentials "$url" &&
+      die "loadout contains a credential-bearing web app URL"' \
+  'false &&
+      die "loadout contains a credential-bearing web app URL"'
+
+run_mutation security-vault-scan-narrowed lib/ress/vault/backup.sh \
+  'if secret_scan "$VAULT"; then' \
+  'if secret_scan "$VAULT/home" "$VAULT/omarchy"; then'
+
+run_mutation security-control-symlink-followed lib/ress/safety.sh \
+  '[[ -f $candidate && ! -L $candidate ]] || return 1' \
+  '[[ -f $candidate ]] || return 1'
+
 # ---- status reads a config it did not write -------------------------------
 
 run_mutation status-json-raw-config lib/ress/vault/commands.sh \
-  '        --argjson packages "$(json_flag "${CFG[INCLUDE_PACKAGES]:-0}")" \' \
+  '        --argjson packages "$(config_status_flag INCLUDE_PACKAGES)" \' \
   '        --argjson packages "${CFG[INCLUDE_PACKAGES]}" \'
 
 run_mutation status-manifest-unchecked lib/ress/vault/common.sh \
@@ -408,11 +446,11 @@ run_mutation loadout-isolation-path-name-accepted lib/ress/loadout/registry.sh \
   '      package) valid_pkg "$name" && [[ $id == "package:$name" ]] || return 1 ;;' \
   '      package) : ;;'
 
-run_mutation loadout-preexisting-gains-ownership lib/ress/loadout/apply.sh \
+run_mutation loadout-preexisting-gains-ownership lib/ress/loadout/planning.sh \
   '          action="protect"; first="present"; cleanup="retain"; claim_status="healthy" ;;' \
   '          action="protect"; first="absent"; cleanup="remove"; claim_status="healthy" ;;'
 
-run_mutation loadout-isolation-conflicts-compatible lib/ress/loadout/apply.sh \
+run_mutation loadout-isolation-conflicts-compatible lib/ress/loadout/planning.sh \
   'definitions_compatible() {' \
   'definitions_compatible() { return 0; #'
 
@@ -464,7 +502,11 @@ run_mutation share-allows-many-themes lib/ress/loadout/share.sh \
 
 # ---- the protocol ---------------------------------------------------------
 
-run_mutation porcelain-prose lib/ress/vault/restore.sh \
+run_mutation cleanup-containment-removed lib/ress/core.sh \
+  '  [[ $path_real == "$parent_real"/* && -d $path && ! -L $path ]] ||' \
+  '  [[ -d $path && ! -L $path ]] ||'
+
+run_mutation porcelain-prose lib/ress/vault/restore-preview.sh \
   'if (( PORCELAIN )); then
     for line in "${lines[@]}"; do emit "LOG|will run: $line"; done
     return 0

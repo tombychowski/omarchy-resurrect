@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Applied-loadout registry validation, atomic persistence, revisions, and the
-# operation journal.
+# Applied-loadout registry validation, atomic persistence, revisions, operation
+# journal, claim registration, and outcome transitions.
 # Depends on core.sh and safety.sh. Owns REGISTRY, REGISTRY_REVISION, and the
 # registry schema/path; used by all tracked-loadout workflows. Uses profile-owned
 # canonical URL normalization after startup; definitions only at source time.
@@ -13,6 +13,38 @@ LOADOUT_REGISTRY_SCHEMA=1
 LOADOUT_REGISTRY="$STATE_DIR/loadouts.json"
 REGISTRY=""
 REGISTRY_REVISION=0
+REGISTRY_INDEX_READY=0
+declare -A REGISTRY_RESOURCE_BY_ID=()
+declare -A REGISTRY_LOADOUT_BY_ID=()
+declare -A REGISTRY_CLAIM_BY_PAIR=()
+declare -A REGISTRY_CLAIMS_BY_LOADOUT=()
+
+registry_build_indexes() {
+  (( REGISTRY_INDEX_READY )) && return 0
+  [[ -z ${RESS_OBSERVATION_LOG:-} ]] || printf 'registry-index\n' >>"$RESS_OBSERVATION_LOG"
+  REGISTRY_RESOURCE_BY_ID=(); REGISTRY_LOADOUT_BY_ID=(); REGISTRY_CLAIM_BY_PAIR=(); REGISTRY_CLAIMS_BY_LOADOUT=()
+  local tag key value
+  while IFS=$'\x1f' read -r tag key value; do
+    [[ -n $tag && -n $key && -n $value ]] || continue
+    case "$tag" in
+      resource) REGISTRY_RESOURCE_BY_ID[$key]="$value" ;;
+      loadout) REGISTRY_LOADOUT_BY_ID[$key]="$value" ;;
+      claim) REGISTRY_CLAIM_BY_PAIR[$key]="$value" ;;
+      claims) REGISTRY_CLAIMS_BY_LOADOUT[$key]="$value" ;;
+    esac
+  done < <(jq -r '
+    (.resources[] | "resource\u001f" + .id + "\u001f" + tojson),
+    (.loadouts[] | "loadout\u001f" + .id + "\u001f" + tojson),
+    (.claims[] | "claim\u001f" + .loadoutId + "|" + .resourceId + "\u001f" + tojson),
+    (.claims | group_by(.loadoutId)[] | "claims\u001f" + .[0].loadoutId + "\u001f" + tojson)
+  ' <<<"$REGISTRY")
+  REGISTRY_INDEX_READY=1
+}
+
+registry_resource_json() { registry_build_indexes; printf '%s' "${REGISTRY_RESOURCE_BY_ID[$1]:-}"; }
+registry_loadout_json() { registry_build_indexes; printf '%s' "${REGISTRY_LOADOUT_BY_ID[$1]:-}"; }
+registry_claim_json() { registry_build_indexes; printf '%s' "${REGISTRY_CLAIM_BY_PAIR["$1|$2"]:-}"; }
+registry_claims_json() { registry_build_indexes; printf '%s' "${REGISTRY_CLAIMS_BY_LOADOUT[$1]:-[]}"; }
 
 registry_empty() {
   jq -nc '{schemaVersion: 1, revision: 0,
@@ -91,7 +123,7 @@ registry_profile_valid() {
   done < <(jq -r '.plugins[] | [.id,.url,.commit] | @tsv' <<<"$profile")
   jq -e '([.plugins[].id] | length) == ([.plugins[].id] | unique | length)' <<<"$profile" >/dev/null || return 1
   while IFS=$'\t' read -r value url icon; do
-    valid_label "$value" && valid_https "$url" && { [[ -z $icon ]] || valid_icon "$icon"; } || return 1
+    valid_label "$value" && valid_public_https "$url" && { [[ -z $icon ]] || valid_icon "$icon"; } || return 1
   done < <(jq -r '.webapps[] | [.name,.url,.icon] | @tsv' <<<"$profile")
   jq -e '([.webapps[].name] | length) == ([.webapps[].name] | unique | length)' <<<"$profile" >/dev/null || return 1
   value=$(jq -r '.theme.name' <<<"$profile"); url=$(jq -r '.theme.url' <<<"$profile"); commit=$(jq -r '.theme.commit' <<<"$profile")
@@ -203,6 +235,8 @@ registry_load() {
   if [[ ! -f $LOADOUT_REGISTRY ]]; then
     REGISTRY=$(registry_empty)
     REGISTRY_REVISION=0
+    REGISTRY_INDEX_READY=0
+    registry_build_indexes
     return 0
   fi
   if ! registry_validate "$LOADOUT_REGISTRY"; then
@@ -211,6 +245,8 @@ registry_load() {
   fi
   REGISTRY=$(<"$LOADOUT_REGISTRY")
   REGISTRY_REVISION=$(jq -r '.revision' <<<"$REGISTRY")
+  REGISTRY_INDEX_READY=0
+  registry_build_indexes
 }
 
 registry_save() {
@@ -223,7 +259,9 @@ registry_save() {
   (( current_revision == REGISTRY_REVISION )) ||
     die "the applied-loadout registry changed while this operation was planning; retry"
   next=$(jq -c --argjson revision "$((REGISTRY_REVISION + 1))" '.revision = $revision' <<<"$next")
-  tmp=$(mktemp "$STATE_DIR/.loadouts.XXXXXX")
+  ress_make_temp_file "$STATE_DIR/.loadouts.XXXXXX" ||
+    die "could not create temporary registry"
+  tmp="$RESS_TEMP_PATH"
   printf '%s\n' "$next" >"$tmp"
   chmod 600 "$tmp"
   if ! registry_validate "$tmp"; then
@@ -233,6 +271,7 @@ registry_save() {
   mv -f "$tmp" "$LOADOUT_REGISTRY"
   REGISTRY="$next"
   REGISTRY_REVISION=$((REGISTRY_REVISION + 1))
+  REGISTRY_INDEX_READY=0
 }
 
 registry_begin_operation() {
@@ -254,5 +293,53 @@ registry_action_state() {
 registry_finish_operation() {
   local next
   next=$(jq -c '.operation = null' <<<"$REGISTRY")
+  registry_save "$next"
+}
+
+registry_register_apply_plan() {
+  local id="$1" source="$2" digest="$3" profile="$4" plan="$5" now precedence baseline actions next
+  now=$(date -u +%s)
+  precedence=$(jq '[.loadouts[].precedence] | max // 0 | . + 1' <<<"$REGISTRY")
+  baseline=$(active_theme_name || true)
+  actions=$(jq -c '[.[] | select(.action == "install" or .action == "activate") |
+    {resourceId:.item.id,state:"planned"}]' <<<"$plan")
+  next=$(jq -c --arg id "$id" --arg source "$source" --arg digest "$digest" \
+    --argjson profile "$(<"$profile")" --argjson plan "$plan" --argjson now "$now" \
+    --argjson precedence "$precedence" --arg baseline "$baseline" --argjson actions "$actions" '
+    if .baseline.activeTheme == null and any($plan[]; .item.kind == "theme-active")
+      then .baseline.activeTheme = $baseline else . end |
+    .loadouts += [{id:$id,name:$profile.name,author:$profile.author,description:$profile.description,
+      source:$source,digest:$digest,profile:$profile,appliedAt:$now,updatedAt:$now,
+      precedence:$precedence,state:(if any($plan[]; .claimStatus == "conflicting") then "conflicting"
+        elif any($plan[]; .claimStatus != "healthy") then "pending" else "healthy" end)}] |
+    reduce $plan[] as $p (.;
+      if any(.resources[]; .id == $p.resource.id) then . else .resources += [$p.resource] end |
+      .claims += [{loadoutId:$id,resourceId:$p.resource.id,requested:($p.item.definition + $p.item.requested),
+        status:$p.claimStatus,lastError:(if $p.claimStatus == "conflicting" then "incompatible or changed resource" else "" end)}]) |
+    .operation = {kind:"apply",target:$id,phase:"planned",actions:$actions}
+  ' <<<"$REGISTRY")
+  registry_save "$next"
+}
+
+registry_set_claim_result() {
+  local loadout="$1" resource="$2" claim_state="$3" observed_state="$4" evidence="$5" error="${6:-}" action_state="done" next
+  [[ $claim_state == healthy ]] || action_state=$claim_state
+  case "$action_state" in pending|deferred) action_state="skipped";; conflicting) action_state="failed";; esac
+  next=$(jq -c --arg loadout "$loadout" --arg resource "$resource" --arg claim "$claim_state" \
+    --arg observed "$observed_state" --argjson evidence "$evidence" --arg error "$error" --arg action "$action_state" '
+    .claims |= map(if .loadoutId == $loadout and .resourceId == $resource
+      then .status = $claim | .lastError = $error else . end) |
+    .resources |= map(if .id == $resource then .state = $observed | .evidence = $evidence else . end) |
+    if .operation != null then .operation.phase = "running" |
+      .operation.actions |= map(if .resourceId == $resource then .state = $action else . end)
+    else . end
+  ' <<<"$REGISTRY")
+  # Derive the target lifecycle from all of its claims after the relation update.
+  next=$(jq -c --arg id "$loadout" '
+    . as $root | .loadouts |= map(if .id == $id then
+      .state = (if any($root.claims[]; .loadoutId == $id and .status == "conflicting") then "conflicting"
+        elif any($root.claims[]; .loadoutId == $id and .status != "healthy") then "pending"
+        else "healthy" end) else . end)
+  ' <<<"$next")
   registry_save "$next"
 }

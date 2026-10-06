@@ -100,7 +100,9 @@ share_candidates_json() {
     name=$(sed -n 's/^Name=//p' "$file" | head -1)
     icon=$(sed -n 's/^Icon=//p' "$file" | head -1)
     code=""; reason=""; launcher=""; web_url=""; flags=""
-    if ! launcher_travels "$file"; then
+    if webapp_url_has_credentials "$(launcher_exec "$file")"; then
+      code="credential-url"; reason="launcher URL contains credentials"
+    elif ! launcher_travels "$file"; then
       code="unsupported-launcher"; reason="launcher has executable fields the loadout cannot represent"
     else
       parts=$(webapp_parts "$(launcher_exec "$file")" 2>/dev/null || true)
@@ -240,8 +242,9 @@ share_current_export_json() {
 }
 
 share_presets_json() {
-  local candidates="$1" loadout item candidate resource observation claim_status state
+  local candidates="$1" loadout item candidate resource observation claim claim_status state
   local presets='[]' ids warnings loadout_id profile_items
+  machine_observation_snapshot_build
   if [[ -f $LOADOUT_REGISTRY ]]; then
     if ! registry_validate "$LOADOUT_REGISTRY"; then
       printf '%s' '{"state":"unavailable","loadouts":[],"reasonCode":"invalid-registry","reason":"applied-loadout state is malformed or unsupported"}'
@@ -256,9 +259,10 @@ share_presets_json() {
     profile_items=$(jq -c '.profile' <<<"$loadout" | profile_share_resources_json /dev/stdin)
     while IFS= read -r item; do
       candidate=$(jq -c --arg id "$(jq -r '.id' <<<"$item")" '.[] | select(.id == $id)' <<<"$candidates")
-      resource=$(jq -c --arg id "$(jq -r '.id' <<<"$item")" '.resources[] | select(.id == $id)' <<<"$REGISTRY")
-      claim_status=$(jq -r --arg lid "$loadout_id" --arg rid "$(jq -r '.id' <<<"$item")" \
-        '.claims[] | select(.loadoutId == $lid and .resourceId == $rid) | .status' <<<"$REGISTRY" | head -1)
+      resource=$(registry_resource_json "$(jq -r '.id' <<<"$item")")
+      claim=$(registry_claim_json "$loadout_id" "$(jq -r '.id' <<<"$item")")
+      claim_status=""
+      [[ -z $claim ]] || claim_status=$(jq -r '.status' <<<"$claim")
       state="missing"
       [[ -z $resource ]] || state=$(jq -r '.state' <<<"$(resource_inspect_json "$resource")")
       if [[ -n $candidate ]] && share_candidate_matches_item "$candidate" "$item" 0 &&
@@ -443,7 +447,8 @@ cmd_share() {
 
   local parent; parent=$(dirname "$out")
   mkdir -p "$parent"
-  PROFILE_WORK=$(mktemp -d "$parent/.ress-profile.XXXXXX")
+  ress_make_temp_dir "$parent/.ress-profile.XXXXXX" || die "could not create profile workspace"
+  PROFILE_WORK="$RESS_TEMP_PATH"
   render_share_profile "$candidates" "$selected" "$PROFILE_WORK/profile.json" "$name" "$description"
   render_share_readme "$PROFILE_WORK/profile.json" "$PROFILE_WORK/README.md"
 
@@ -471,7 +476,8 @@ cmd_share() {
   step_ok share "$(plural "$n_pkg" package), $n_aur AUR, $(plural "$n_plug" plugin), $(plural "$n_web" "web app")"
 
   local origin link
-  origin=$(git -C "$out" remote get-url origin 2>/dev/null || true)
+  origin=$(canonical_remote "$(git -C "$out" remote get-url origin 2>/dev/null || true)")
+  [[ -z $origin ]] || git -C "$out" remote set-url origin "$origin" 2>/dev/null || true
   link=""
   [[ -n $origin ]] && link=$(ress_link "$origin")
   if [[ -n $link ]]; then CFG[PROFILE_URL]="$link"; save_config; fi

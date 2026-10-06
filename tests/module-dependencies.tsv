@@ -1,0 +1,19 @@
+# module<TAB>allowed owners (reviewed architecture evidence; exact runtime calls
+# are conservatively checked by tests/check-structure.sh)
+lib/ress/core.sh	core
+lib/ress/safety.sh	core safety
+lib/ress/machine/packages.sh	core safety machine
+lib/ress/vault/common.sh	core safety vault-common
+lib/ress/vault/backup.sh	core safety machine vault-common vault-backup
+lib/ress/vault/restore-state.sh	core restore-state
+lib/ress/vault/restore-preview.sh	core safety machine vault-common restore-state restore-preview
+lib/ress/vault/restore.sh	core safety machine vault-common restore-state restore-preview vault-restore
+lib/ress/vault/verify.sh	core safety vault-common vault-verify
+lib/ress/vault/commands.sh	core safety vault-common registry vault-commands
+lib/ress/loadout/registry.sh	core safety profile registry
+lib/ress/loadout/profile.sh	core safety profile
+lib/ress/loadout/resources.sh	core safety machine profile registry resources
+lib/ress/loadout/planning.sh	core machine profile registry resources planning
+lib/ress/loadout/share.sh	core safety machine profile registry resources share
+lib/ress/loadout/lifecycle.sh	core safety machine profile registry resources planning lifecycle
+lib/ress/loadout/apply.sh	core safety machine profile registry resources planning lifecycle apply

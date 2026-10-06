@@ -83,6 +83,10 @@ Each subtree has one writer and one reconstruction path:
 
 Tab-separated inventories are parsed as data, then validated before values reach external commands. Invalid names, paths, URLs, commits, units, or launcher fields are refused rather than interpreted.
 
+Repository remotes are recorded without URL user information. A web-app
+launcher whose URL embeds credentials is omitted and reported because stripping
+that information could change application meaning.
+
 ## Configuration boundary
 
 Ordinary configuration capture is an allowlist assembled from the shipped `defaults/include.txt` plus the user's `~/.config/ress/include`. Exclusions combine `defaults/exclude.txt` and the user's `~/.config/ress/exclude`.
@@ -93,7 +97,7 @@ Autostart launchers are excluded unless `CAPTURE_AUTOSTART=1`; enabling capture 
 
 ## Secret-bearing paths
 
-The plaintext vault trees must not contain private keys or other mandatory credential exclusions. Captured plaintext content is scanned before commit according to `SECRET_SCAN`:
+The plaintext vault trees must not contain private keys or other mandatory credential exclusions. All captured plaintext below the vault root is scanned before commit according to `SECRET_SCAN`; Git metadata and the known `secrets/secrets.tar.age` ciphertext are excluded:
 
 - `warn` identifies the affected path and finding type without recording the matched value, then permits the commit.
 - `block` refuses to commit while findings remain.
@@ -111,6 +115,6 @@ A schema newer than the CLI supports, a non-numeric schema, or malformed JSON is
 
 ## Security assumptions
 
-A vault fetched from a remote is untrusted input even when it belongs to the user. Git transport retrieves bytes; it does not make package names, paths, launcher commands, unit names, or repository URLs safe. The restore path validates each externally meaningful value and previews executable or persistent content before consent.
+A vault fetched from a remote is untrusted input even when it belongs to the user. Git transport retrieves bytes; it does not make package names, paths, launcher commands, unit names, or repository URLs safe. Manifests, inventories, lists, launchers, and the encrypted bundle must be contained regular non-symlink files. Directory replay uses contained roots and safe-link copying, so an escaping link is neither followed nor used to select a mutation target. The restore path validates these boundaries and each externally meaningful value before consent.
 
 See [Restore safety](restore-safety.md) for mutation rules and [Encrypted secrets](../workflows/encrypted-secrets.md) for the opt-in workflow.

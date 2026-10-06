@@ -6,7 +6,7 @@
 # check, repair, update, remove, and apply. Definitions only at source time.
 
 resource_inspect_json() {
-  local resource="$1" kind name definition state evidence target actual_url actual_sha dirty parts actual_icon current
+  local resource="$1" freshness="${2:-snapshot}" kind name definition state evidence target actual_url actual_sha dirty parts actual_icon current
   local resource_id effective_theme_loadout
   resource_id=$(jq -r '.id' <<<"$resource")
   kind=$(jq -r '.kind' <<<"$resource")
@@ -15,7 +15,8 @@ resource_inspect_json() {
   state="missing"; evidence='{}'
   case "$kind" in
     package)
-      if pacman -Q "$name" >/dev/null 2>&1; then
+      if { [[ $freshness == live ]] && pacman -Q "$name" >/dev/null 2>&1; } ||
+        { [[ $freshness != live ]] && machine_package_present "$name"; }; then
         state="present"; evidence=$(jq -nc --arg name "$name" '{package:$name}')
       fi
       ;;
@@ -70,7 +71,8 @@ resource_inspect_json() {
       fi
       ;;
     theme-active)
-      current=$(active_theme_name || true)
+      if [[ $freshness == live ]]; then current=$(active_theme_name || true)
+      else current=$(machine_active_theme); fi
       effective_theme_loadout=$(jq -r '
         . as $root |
         [$root.claims[] as $claim |
@@ -116,7 +118,8 @@ plugin_remove_supported() {
   # IPC can fail while a shell process is starting or temporarily unhealthy.
   # In that case fail closed instead of pretending there is no live consumer.
   pgrep -u "$UID" -x quickshell >/dev/null 2>&1 && return 1
-  shim=$(mktemp -d)
+  ress_make_temp_dir || return 1
+  shim="$RESS_TEMP_PATH"
   cat >"$shim/omarchy-shell" <<'SHIM'
 #!/bin/bash
 case "${1:-} ${2:-}" in
@@ -135,7 +138,7 @@ SHIM
 resource_remove_adapter() {
   local resource="$1" allow_changed="${2:-0}" kind name observation current
   kind=$(jq -r '.kind' <<<"$resource"); name=$(jq -r '.name' <<<"$resource")
-  observation=$(resource_inspect_json "$resource")
+  observation=$(resource_inspect_json "$resource" live)
   current=$(jq -r '.state' <<<"$observation")
   if [[ $current != present ]]; then
     (( allow_changed )) && [[ $current == modified || $current == conflicting ]] || return 2
@@ -158,7 +161,7 @@ resource_remove_adapter() {
     theme-active) return 0 ;;
     *) return 1 ;;
   esac
-  [[ $kind == theme-active ]] || [[ $(jq -r '.state' <<<"$(resource_inspect_json "$resource")") == missing ]]
+  [[ $kind == theme-active ]] || [[ $(jq -r '.state' <<<"$(resource_inspect_json "$resource" live)") == missing ]]
 }
 
 theme_release_effect() {
@@ -185,7 +188,7 @@ release_claim() {
   [[ -n $resource ]] || return 0
   cleanup=$(jq -r '.cleanupPolicy' <<<"$resource")
   others=$(jq --arg loadout "$loadout" --arg rid "$rid" '[.claims[] | select(.resourceId == $rid and .loadoutId != $loadout)] | length' <<<"$REGISTRY")
-  observation=$(resource_inspect_json "$resource"); state=$(jq -r '.state' <<<"$observation")
+  observation=$(resource_inspect_json "$resource" live); state=$(jq -r '.state' <<<"$observation")
   if (( others > 0 )) || [[ $cleanup == retain || $state == missing ]]; then
     :
   elif [[ $(jq -r '.kind' <<<"$resource") == theme-active ]]; then
@@ -250,7 +253,7 @@ apply_one_resource() {
       omarchy theme set "$name" >/dev/null 2>&1 || error="could not activate theme $name"
       ;;
   esac
-  observation=$(resource_inspect_json "$(jq -c --arg id "$rid" '.resources[] | select(.id == $id)' <<<"$REGISTRY")")
+  observation=$(resource_inspect_json "$(jq -c --arg id "$rid" '.resources[] | select(.id == $id)' <<<"$REGISTRY")" live)
   state=$(jq -r '.state' <<<"$observation"); evidence=$(jq -c '.evidence' <<<"$observation")
   if [[ -z $error && $state == present ]]; then
     registry_set_claim_result "$loadout" "$rid" healthy present "$evidence"

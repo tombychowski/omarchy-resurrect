@@ -44,7 +44,11 @@ the catalog with `--acknowledge-unavailable ID FINGERPRINT`. The CLI reinspects
 the machine after you activate export, so stale selections or acknowledgements
 fail without changing the current profile; refresh and review the composer.
 
-Read the output warnings. A web app whose launcher form cannot be represented is left out rather than weakened into a misleading entry. Plugins and cloneable themes need a safe remote and exact commit to travel under the default pinning policy.
+Read the output warnings. A web app whose launcher form cannot be represented,
+or whose URL embeds credentials, is left out rather than weakened into a
+misleading entry. Plugins and cloneable themes need a safe remote and exact
+commit to travel under the default pinning policy; any URL user information is
+removed before export.
 
 Inspect `profile.json` before publishing. It should contain no dotfiles, keys, arbitrary files, or command field.
 

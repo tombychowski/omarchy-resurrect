@@ -70,6 +70,11 @@ The ordinary `ress share` invocation retains this whole-machine behavior: it
 exports every shareable package, plugin, and web app plus the active shareable
 theme. The profile still represents at most one theme.
 
+HTTPS Git remotes are canonicalized without URL user information before they
+enter candidates or profiles. Credential-bearing web-app URLs are not
+canonicalized because that could change application semantics: local candidates
+are unavailable and incoming profiles are refused before apply mutation.
+
 Selective export uses the same collectors and schema:
 
 ```bash
@@ -107,7 +112,10 @@ A changed or stale acknowledgement is refused. Deliberately deselecting a still
 available resource requires no acknowledgement. A malformed current profile is
 not treated as an empty export and cannot be selectively replaced.
 
-Web-app launchers with browser flags, multiple executable entries, or other unsupported forms are omitted and reported. Local-only or unsafe Git remotes are not converted into fetchable code references. No `$HOME` content is embedded.
+Web-app launchers with browser flags, multiple executable entries,
+credential-bearing URLs, or other unsupported forms are omitted and reported.
+Local-only or unsafe Git remotes are not converted into fetchable code
+references. No `$HOME` content is embedded.
 
 `ress share catalog --json [--out DIR]` exposes safe identities and omission
 reasons for composition without exposing the definitions themselves. Its exact

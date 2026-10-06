@@ -11,9 +11,11 @@ Before replaying categories, restore:
 1. validates `--only` and `--skip` category names;
 2. normalizes a supplied source and handles replacement of an existing local vault as an explicit decision;
 3. checks required local tools;
-4. obtains the operation lock;
-5. locates and parses the canonical or supported legacy manifest; and
-6. validates the schema as a plain supported integer.
+4. requires the manifest and scalar control files to be contained regular
+   non-symlink files and validates replay directory roots;
+5. obtains the operation lock;
+6. locates and parses the canonical or supported legacy manifest; and
+7. validates the schema as a plain supported integer.
 
 A typo in a category, an invalid schema, or a missing dependency stops the operation instead of silently selecting no work or failing after partial mutation.
 
@@ -24,6 +26,10 @@ A live restore reports the source machine and snapshot, then describes planned w
 The general confirmation covers writing configuration and performing ordinary selected actions. `--yes` can supply that confirmation but does not grant the independent AUR or service decisions below.
 
 `--dry-run` uses the same planning paths but performs no category mutation and writes no restore progress. When used with `--from`, it clones into a temporary directory so preview does not replace or repoint the configured vault.
+
+Credentials embedded in a supplied transport URL may be used for that immediate
+clone or fetch. Prompts, errors, saved config, and the resulting Git origin use
+only the credential-free repository identity.
 
 ## Category selection
 

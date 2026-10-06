@@ -53,6 +53,7 @@ cmd_verify() {
   done
   resolve_vault
   has_manifest || die "no vault at $VAULT — run: ress backup"
+  validate_vault_artifact
   local manifest; manifest=$(manifest_path)
 
   # Each category reports three things: how many the vault names, how many are
@@ -62,9 +63,13 @@ cmd_verify() {
   local -A want=() have=() missing=() refused=()
 
   # ---- packages
-  local installed; installed=$(mktemp)
+  local installed
+  ress_make_temp_file || die "could not create verification workspace"
+  installed="$RESS_TEMP_PATH"
   pacman -Qq 2>/dev/null | sort -u >"$installed" || true
-  local wanted_pkgs; wanted_pkgs=$(mktemp)
+  local wanted_pkgs
+  ress_make_temp_file || die "could not create verification workspace"
+  wanted_pkgs="$RESS_TEMP_PATH"
   { verify_list "$VAULT/packages/native.txt" valid_pkg
     verify_list "$VAULT/packages/foreign.txt" valid_pkg
   } | sort -u >"$wanted_pkgs"
@@ -90,6 +95,7 @@ cmd_verify() {
   local themes=0 themes_here=0 missing_themes=() name url tsha
   if [[ -f $VAULT/omarchy/themes.tsv ]]; then
     while IFS=$'\037' read -r name url tsha; do
+      url=$(strip_credentials "$url")
       [[ -n $name ]] || continue
       valid_theme "$name" || continue
       themes=$((themes + 1))
@@ -142,6 +148,7 @@ cmd_verify() {
   local plugins=0 plugins_here=0 missing_plugins=() refused_plugins=() id purl psha
   if [[ -f $VAULT/plugins/plugins.tsv ]]; then
     while IFS=$'\037' read -r id purl _ psha; do
+      purl=$(strip_credentials "$purl")
       [[ -n $id ]] || continue
       if ! valid_id "$id"; then refused_plugins+=("$(plain "$id")"); continue; fi
       if [[ -z $purl ]] || ! valid_git_remote "$purl"; then
@@ -270,8 +277,9 @@ cmd_scan() {
   done
   resolve_vault
   has_manifest || die "no vault at $VAULT — run: ress backup"
+  validate_vault_artifact
 
-  secret_scan "$VAULT/home" "$VAULT/omarchy" || true
+  secret_scan "$VAULT" || true
 
   if (( as_json )); then
     printf '%s\n' "$SECRET_FINDINGS" | jq -Rs '

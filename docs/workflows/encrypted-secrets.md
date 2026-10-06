@@ -70,7 +70,11 @@ ress status
 ress scan
 ```
 
-The vault should contain `secrets/secrets.tar.age`, not plaintext selected files under `home/`. The ordinary secret scan checks the plaintext capture trees before commit; it cannot inspect ciphertext and is not proof that an arbitrary unrecognizable secret is absent.
+The vault should contain `secrets/secrets.tar.age`, not plaintext selected
+files under `home/`. The ordinary secret scan checks every captured plaintext
+subtree before commit while excluding Git metadata and that known ciphertext
+bundle. It cannot inspect ciphertext and is not proof that an arbitrary
+unrecognizable secret is absent.
 
 ## Restore
 

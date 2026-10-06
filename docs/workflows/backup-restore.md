@@ -21,6 +21,11 @@ ress init
 ress init --remote https://github.com/you/private-omarchy-vault.git
 ```
 
+If an immediate HTTPS operation is supplied a credential-bearing URL, ress uses
+it only for that transport. Config, status, vault Git origins, warnings, and
+generated instructions retain only the credential-free repository identity.
+Prefer Git credential helpers or SSH rather than embedding credentials.
+
 Review capture choices in `ress status` or `~/.config/ress/config`. The ordinary categories default on except secrets. Change a supported setting with `ress set`, for example:
 
 ```bash
@@ -51,7 +56,9 @@ ress status
 ress scan
 ```
 
-Read warnings about unlisted configuration, unsafe symlinks, local-only plugins/themes, and unsupported launchers on the source machine; it is the machine best able to resolve those omissions.
+Read warnings about unlisted configuration, unsafe symlinks, local-only
+plugins/themes, unsupported launchers, and credential-bearing web-app URLs on
+the source machine; it is the machine best able to resolve those omissions.
 
 ## Preview on the destination
 

@@ -25,7 +25,7 @@ The default threshold is 48 hours and the manifest permits a panel setting from 
 |---|---|---|
 | idle | No panel-owned or external ress operation is active | Show the freshness summary and available actions; do not add a generic “ready” badge |
 | starting/running | The CLI process is active; a step may or may not have a numeric total | `Working…`, the current CLI step, `Backing up…`, or `Exporting…`; show determinate progress only for a valid `PROGRESS` total |
-| external running | Another ress process owns the operation lock, commonly a scheduled backup | Use the busy presentation without claiming which step is active |
+| external running | Another ress process owns the operation lock and its matching opaque-token marker, commonly a scheduled backup; unrelated commands cannot clear it and dry runs do not create it | Use the busy presentation without claiming which step is active |
 | previewing | Restore or apply is describing planned actions in the terminal and has not crossed confirmation | CLI headings such as `This will install` or the restore preview; the panel only labels the action `Preview what it installs` |
 | complete | The process exits zero with terminal state `ok` | `Backed up` or `Loadout exported` for in-panel actions; human CLI completion text in the terminal |
 | partial | Restore reached its terminal report with failed category steps | `<action> finished with problems`; the terminal names failures and tells the user a rerun continues remaining work |

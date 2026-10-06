@@ -4,7 +4,7 @@
 # configuration, locks, generic helpers, and process-wide cleanup.
 #
 # Loaded by bin/ress after it establishes PLUGIN_DIR. Owns CFG, global command
-# flags, common temporary paths, and the primary operation/config locks. Used by
+# flags, bounded temporary cleanup, and the primary operation/config locks. Used by
 # every vault and loadout workflow. This module defines state and functions only;
 # it must not parse arguments, install traps, perform I/O work, or emit output
 # merely because it was sourced.
@@ -40,7 +40,8 @@ PORCELAIN=0
 DRY_RUN=0
 ASSUME_YES=0
 ALLOW_UNPINNED=0
-LOADOUT_LOCKED=0
+OPERATION_LOCKED=0
+RUNNING_MARKER_TOKEN=""
 # Set by --aur / --no-aur / --review-aur; empty leaves the decision to the AUR
 # setting, which defaults to asking.
 AUR_CHOICE=""
@@ -78,35 +79,41 @@ confirm() {
 
 # ------------------------------------------------------------------- config
 
-declare -A CFG=(
-  [VAULT]="$DEFAULT_VAULT"
-  [REMOTE]=""
-  [AUTO_BACKUP]="off"
-  [AUTO_INTERVAL_HOURS]="24"
-  [AUTO_PUSH]="0"
-  [INCLUDE_PACKAGES]="1"
-  [INCLUDE_CONFIG]="1"
-  [INCLUDE_OMARCHY]="1"
-  [INCLUDE_WEBAPPS]="1"
-  [INCLUDE_PLUGINS]="1"
-  [INCLUDE_SECRETS]="0"
-  [SECRETS_MODE]="passphrase"
-  [SECRETS_RECIPIENT]=""
-  [PROFILE_URL]=""
-  # Restore writes files. The one thing it can *turn on* is a systemd user
-  # unit, so that is a separate decision with its own default: ask.
-  [ENABLE_UNITS]="ask"
-  # And the one thing it can *build* is an AUR package. Same reasoning, same
-  # default.
-  [AUR]="ask"
-  # warn | block | off. What to do when a capture looks like it picked up a
-  # credential.
-  [SECRET_SCAN]="warn"
-  # Every file in ~/.config/autostart is a command that runs at your next
-  # login, which is why it is not captured by default. Turning this on is a
-  # decision, so it is a setting rather than a line in a list.
-  [CAPTURE_AUTOSTART]="0"
+# One schema owns every persisted setting. CONFIG_KEYS is also the stable file
+# order; loading deliberately preserves malformed values for known keys so the
+# CLI can report hand edits while each consumer still applies its safe fallback.
+CONFIG_KEYS=(
+  VAULT REMOTE AUTO_BACKUP AUTO_INTERVAL_HOURS AUTO_PUSH
+  INCLUDE_PACKAGES INCLUDE_CONFIG INCLUDE_OMARCHY INCLUDE_WEBAPPS
+  INCLUDE_PLUGINS INCLUDE_SECRETS SECRETS_MODE SECRETS_RECIPIENT PROFILE_URL
+  ENABLE_UNITS AUR SECRET_SCAN CAPTURE_AUTOSTART
 )
+declare -A CONFIG_DEFAULTS=(
+  [VAULT]="$DEFAULT_VAULT" [REMOTE]="" [AUTO_BACKUP]="off"
+  [AUTO_INTERVAL_HOURS]="24" [AUTO_PUSH]="0" [INCLUDE_PACKAGES]="1"
+  [INCLUDE_CONFIG]="1" [INCLUDE_OMARCHY]="1" [INCLUDE_WEBAPPS]="1"
+  [INCLUDE_PLUGINS]="1" [INCLUDE_SECRETS]="0" [SECRETS_MODE]="passphrase"
+  [SECRETS_RECIPIENT]="" [PROFILE_URL]="" [ENABLE_UNITS]="ask" [AUR]="ask"
+  [SECRET_SCAN]="warn" [CAPTURE_AUTOSTART]="0"
+)
+declare -A CONFIG_TYPES=(
+  [VAULT]="nonempty" [REMOTE]="url" [AUTO_BACKUP]="choice"
+  [AUTO_INTERVAL_HOURS]="uint" [AUTO_PUSH]="choice" [INCLUDE_PACKAGES]="choice"
+  [INCLUDE_CONFIG]="choice" [INCLUDE_OMARCHY]="choice" [INCLUDE_WEBAPPS]="choice"
+  [INCLUDE_PLUGINS]="choice" [INCLUDE_SECRETS]="choice" [SECRETS_MODE]="choice"
+  [SECRETS_RECIPIENT]="string" [PROFILE_URL]="url" [ENABLE_UNITS]="choice"
+  [AUR]="choice" [SECRET_SCAN]="choice" [CAPTURE_AUTOSTART]="choice"
+)
+declare -A CONFIG_CHOICES=(
+  [AUR]="ask yes no" [ENABLE_UNITS]="ask yes no" [SECRET_SCAN]="warn block off"
+  [AUTO_BACKUP]="on off" [AUTO_PUSH]="0 1" [CAPTURE_AUTOSTART]="0 1"
+  [INCLUDE_PACKAGES]="0 1" [INCLUDE_CONFIG]="0 1" [INCLUDE_OMARCHY]="0 1"
+  [INCLUDE_WEBAPPS]="0 1" [INCLUDE_PLUGINS]="0 1" [INCLUDE_SECRETS]="0 1"
+  [SECRETS_MODE]="passphrase recipient"
+)
+declare -A CFG=()
+for config_key in "${CONFIG_KEYS[@]}"; do CFG[$config_key]="${CONFIG_DEFAULTS[$config_key]}"; done
+unset config_key
 
 load_config() {
   [[ -f $CONFIG_FILE ]] || return 0
@@ -118,22 +125,25 @@ load_config() {
     key="${key//[[:space:]]/}"
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
-    [[ -n $key ]] && CFG[$key]="$value"
+    [[ -n $key && -v CONFIG_DEFAULTS[$key] ]] && CFG[$key]="$value"
   done <"$CONFIG_FILE"
+  # Older hand-written configs may contain transport credentials. Once loaded,
+  # every consumer sees only the credential-free identity.
+  CFG[REMOTE]=$(strip_credentials "${CFG[REMOTE]:-}")
+  CFG[PROFILE_URL]=$(strip_credentials "${CFG[PROFILE_URL]:-}")
 }
 
 save_config() {
   private_dir "$CONFIG_DIR"
-  local tmp; tmp=$(mktemp "$CONFIG_DIR/.config.XXXXXX")
+  local tmp
+  ress_make_temp_file "$CONFIG_DIR/.config.XXXXXX" || die "could not create temporary config"
+  tmp="$RESS_TEMP_PATH"
   {
     echo "# ress configuration. Written by \`ress set\` and by the panel."
     echo "# Both the CLI and the Quickshell panel read this file; there is no second source."
     echo
     local key
-    for key in VAULT REMOTE AUTO_BACKUP AUTO_INTERVAL_HOURS AUTO_PUSH \
-      INCLUDE_PACKAGES INCLUDE_CONFIG INCLUDE_OMARCHY INCLUDE_WEBAPPS \
-      INCLUDE_PLUGINS INCLUDE_SECRETS SECRETS_MODE SECRETS_RECIPIENT PROFILE_URL \
-      ENABLE_UNITS AUR SECRET_SCAN CAPTURE_AUTOSTART; do
+    for key in "${CONFIG_KEYS[@]}"; do
       printf '%s=%s\n' "$key" "${CFG[$key]}"
     done
   } >"$tmp"
@@ -164,19 +174,71 @@ json_number() {
   printf '%s' "$value"
 }
 
+config_status_flag() { json_flag "${CFG[$1]}"; }
+config_status_onoff() { [[ ${CFG[$1]} == on ]] && printf true || printf false; }
+config_status_number() { json_number "${CFG[$1]}" "${CONFIG_DEFAULTS[$1]}"; }
+
+config_validate_value() {
+  local key="$1" value="$2" choice
+  case "${CONFIG_TYPES[$key]}" in
+    choice)
+      for choice in ${CONFIG_CHOICES[$key]}; do [[ $value == "$choice" ]] && return 0; done
+      die "$key must be one of: ${CONFIG_CHOICES[$key]} (got: $value)"
+      ;;
+    uint) [[ $value =~ ^[0-9]+$ ]] || die "$key must be a whole number of hours (got: $value)" ;;
+    nonempty) [[ -n $value ]] || die "$key cannot be empty" ;;
+  esac
+}
+
 have() { command -v "$1" >/dev/null 2>&1; }
 private_dir() { mkdir -p "$1" && chmod 700 "$1" 2>/dev/null || true; }
 
 # The panel-owned engine and the headless scheduler are separate processes with
 # separate ideas of "busy". Without a lock they will both write the same git
 # vault; without the marker file the bar shows nothing while the scheduler runs.
-DRYRUN_VAULT=""
-PROFILE_WORK=""
+declare -a RESS_CLEANUP_FILES=()
+declare -a RESS_CLEANUP_DIRS=()
+RESS_TEMP_PATH=""
+
+ress_make_temp_file() {
+  local template="${1:-${TMPDIR:-/tmp}/ress.XXXXXX}" parent path parent_real path_real
+  parent=$(dirname "$template")
+  parent_real=$(realpath -m -- "$parent") || return 1
+  path=$(mktemp "$template") || return 1
+  path_real=$(realpath -m -- "$path") || { rm -f -- "$path"; return 1; }
+  [[ $path_real == "$parent_real"/* && -f $path && ! -L $path ]] ||
+    { rm -f -- "$path"; return 1; }
+  RESS_CLEANUP_FILES+=("$path_real")
+  RESS_TEMP_PATH="$path_real"
+}
+
+ress_make_temp_dir() {
+  local template="${1:-${TMPDIR:-/tmp}/ress.XXXXXX}" parent path parent_real path_real
+  parent=$(dirname "$template")
+  parent_real=$(realpath -m -- "$parent") || return 1
+  path=$(mktemp -d "$template") || return 1
+  path_real=$(realpath -m -- "$path") || { rmdir -- "$path" 2>/dev/null; return 1; }
+  [[ $path_real == "$parent_real"/* && -d $path && ! -L $path ]] ||
+    { rm -rf -- "$path"; return 1; }
+  RESS_CLEANUP_DIRS+=("$path_real")
+  RESS_TEMP_PATH="$path_real"
+}
+
 ress_cleanup() {
-  [[ -n ${DRYRUN_VAULT:-} ]] && rm -rf "$DRYRUN_VAULT" 2>/dev/null
-  [[ -n ${STATE_DIR:-} ]] && rm -f "$STATE_DIR/running" 2>/dev/null
-  [[ -n ${APPLY_WORK:-} ]] && rm -rf "$APPLY_WORK" 2>/dev/null
-  [[ -n ${PROFILE_WORK:-} ]] && rm -rf "$PROFILE_WORK" 2>/dev/null
+  local path
+  for path in "${RESS_CLEANUP_FILES[@]:-}"; do
+    [[ -n $path && ( -f $path || -L $path ) ]] && rm -f -- "$path" 2>/dev/null
+  done
+  for path in "${RESS_CLEANUP_DIRS[@]:-}"; do
+    [[ -n $path && -d $path && ! -L $path ]] && rm -rf -- "$path" 2>/dev/null
+  done
+  if [[ -n ${RUNNING_MARKER_TOKEN:-} && -n ${STATE_DIR:-} && -f $STATE_DIR/running ]]; then
+    local marker_token=""
+    IFS= read -r marker_token <"$STATE_DIR/running" || true
+    if [[ $marker_token == "$RUNNING_MARKER_TOKEN" ]]; then
+      rm -f -- "$STATE_DIR/running" 2>/dev/null
+    fi
+  fi
   return 0
 }
 # `ress set` is a read-modify-write of one small file, and the panel fires one
@@ -187,22 +249,27 @@ ress_cleanup() {
 take_config_lock() {
   private_dir "$CONFIG_DIR"
   exec 8>"$CONFIG_DIR/.lock"
-  flock -w 5 8 || true
+  flock -w 5 8 || die "configuration is busy; try again"
 }
 
 take_lock() {
   private_dir "$STATE_DIR"
   exec 9>"$STATE_DIR/lock"
   flock -n 9 || die "another ress operation is already running"
+  OPERATION_LOCKED=1
   # The lock is still taken for a dry run — it clones into a temp directory and
   # reads the vault, and two of those at once is still two — but the marker the
   # bar reads as "busy" is not written, because nothing is happening to this
   # machine.
-  (( DRY_RUN )) || date -u +%s >"$STATE_DIR/running"
-  LOADOUT_LOCKED=1
+  if (( ! DRY_RUN )); then
+    local marker_token
+    marker_token="${BASHPID:-$$}:$(date -u +%s%N):$RANDOM"
+    printf '%s\n' "$marker_token" >"$STATE_DIR/running"
+    RUNNING_MARKER_TOKEN="$marker_token"
+  fi
 }
 
-ensure_loadout_lock() { (( LOADOUT_LOCKED )) || take_lock; }
+ensure_operation_lock() { (( OPERATION_LOCKED )) || take_lock; }
 
 # "1 plugins" reads like a bug even when the number is right.
 plural() {
@@ -215,8 +282,6 @@ duration() {
   if (( s < 60 )); then printf '%ds' "$s"
   else printf '%dm %ds' $((s / 60)) $((s % 60)); fi
 }
-
-json_escape() { printf '%s' "$1" | jq -Rs .; }
 
 # grep -c prints a count and still exits 1 on zero matches, so the naive
 # `grep -c ... || echo 0` prints "0\n0" and poisons every jq --argjson downstream.

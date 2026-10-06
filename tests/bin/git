@@ -42,6 +42,7 @@ case "$verb" in
   clone|fetch|pull|push|ls-remote)
     log_call "git $*"
     inject=(-c "url.$(state)/remotes/.insteadOf=https://github.com/example/"
+            -c "url.$(state)/remotes/.insteadOf=https://TOPSECRET@github.com/example/"
             -c "url.$(state)/remotes/.insteadOf=ssh://git@ssh.example/"
             -c "url.$(state)/remotes/.insteadOf=git@ssh.example:")
     ;;

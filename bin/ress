@@ -27,14 +27,18 @@ PLUGIN_DIR=$(dirname "$SELF_DIR")
 RESS_MODULES=(
   lib/ress/core.sh
   lib/ress/safety.sh
+  lib/ress/machine/packages.sh
   lib/ress/vault/common.sh
   lib/ress/vault/backup.sh
+  lib/ress/vault/restore-state.sh
+  lib/ress/vault/restore-preview.sh
   lib/ress/vault/restore.sh
   lib/ress/vault/verify.sh
   lib/ress/vault/commands.sh
   lib/ress/loadout/registry.sh
   lib/ress/loadout/profile.sh
   lib/ress/loadout/resources.sh
+  lib/ress/loadout/planning.sh
   lib/ress/loadout/share.sh
   lib/ress/loadout/lifecycle.sh
   lib/ress/loadout/apply.sh

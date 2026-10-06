@@ -121,3 +121,49 @@ assert_no_output "Possible credentials in the vault" "off does not scan"
 ress set SECRET_SCAN=warn >/dev/null
 ress backup -m "scanner on"
 assert_output "Possible credentials in the vault" "and on does"
+
+# ---- 7. every plaintext vault subtree, with explicit exclusions -----------
+
+# Clear the earlier source finding, then place one in a captured launcher:
+# outside the historical home/ and omarchy/ scan roots.
+grep -v 'REAL_TOKEN' "$HOME/.bash_profile" >"$SANDBOX/bash-profile.clean"
+mv "$SANDBOX/bash-profile.clean" "$HOME/.bash_profile"
+mkdir -p "$HOME/.local/share/applications"
+cat >"$HOME/.local/share/applications/Scanned.desktop" <<'DESKTOP'
+[Desktop Entry]
+Name=Scanned
+Exec=omarchy-launch-webapp https://scan.example/
+Icon=scanned
+Type=Application
+X-Token=ghp_Z1y2X3w4V5u6T7s8R9q0P1o2N3m4L5k6J7h8
+DESKTOP
+
+ress backup -m "launcher finding"
+assert_ok "warn mode scans captured plaintext outside home and omarchy"
+assert_output "webapps/apps/Scanned.desktop" "whole-vault scan reports the launcher path"
+assert_output "github-token" "whole-vault scan applies the same rule"
+assert_no_output "ghp_Z1y2X3w4" "whole-vault finding does not reveal the value"
+
+# Remove the plaintext finding and establish a clean working tree.
+sed -i '/^X-Token=/d' "$HOME/.local/share/applications/Scanned.desktop"
+ress backup -m "clean launcher" >/dev/null
+
+# Git objects, the known encrypted bundle, and binary content are outside the
+# plaintext promise even when their bytes happen to resemble a token.
+mkdir -p "$VAULT/secrets" "$VAULT/report"
+printf 'ghp_Z1y2X3w4V5u6T7s8R9q0P1o2N3m4L5k6J7h8\n' >"$VAULT/secrets/secrets.tar.age"
+printf 'ghp_Z1y2X3w4V5u6T7s8R9q0P1o2N3m4L5k6J7h8\n' >"$VAULT/.git/scanner-probe"
+printf '\0ghp_Z1y2X3w4V5u6T7s8R9q0P1o2N3m4L5k6J7h8\n' >"$VAULT/report/binary.dat"
+ress scan
+assert_ok "scan excludes Git metadata, encrypted ciphertext, and binary files"
+assert_output "Nothing in this vault" "excluded content creates no finding"
+
+# Blocking applies to the same expanded scope.
+printf 'X-Token=ghp_Z1y2X3w4V5u6T7s8R9q0P1o2N3m4L5k6J7h8\n' \
+  >>"$HOME/.local/share/applications/Scanned.desktop"
+ress set SECRET_SCAN=block >/dev/null
+before_block=$(git -C "$VAULT" rev-list --count HEAD)
+ress backup -m "blocked launcher"
+assert_fails "block mode rejects a finding outside historical scan roots"
+assert_output "webapps/apps/Scanned.desktop"
+assert_equals "$(git -C "$VAULT" rev-list --count HEAD)" "$before_block" "whole-vault block creates no commit"

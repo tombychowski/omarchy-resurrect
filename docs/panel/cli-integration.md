@@ -62,7 +62,10 @@ Status provides manifest counts and configured state. Freshness and relative age
 
 - `~/.config/ress/config` for category, schedule, remote, and consent settings;
 - `last-attempt` for schedule calculations; and
-- `running` for an operation owned by another ress process.
+- `running` for an operation owned by another ress process. The process that
+  acquires the primary operation lock writes an opaque token and removes the
+  marker only when that token still matches. Read-only commands and dry runs do
+  not create, replace, or remove another process's marker.
 
 Watching these small files avoids polling or interpreting vault contents. A refresh occurs when the panel opens and after an in-panel worker exits.
 
@@ -94,7 +97,13 @@ Commands are argument arrays and pasted sources follow a `--` boundary. The term
 
 ## Settings dispatch
 
-Category and policy edits call `ress set KEY=VALUE` through detached argument-array processes. QML does not rewrite the config file. The CLI validates supported keys and values, locks the config update, re-reads current content under that lock, and writes the result.
+Category and policy edits call `ress set KEY=VALUE` through detached argument-array processes. QML does not rewrite the config file. The CLI validates supported keys and values, locks the config update, re-reads current content under that lock, and writes the result. If the bounded lock wait expires, the command fails with a retryable error before rereading or writing; there is no unlocked fallback.
+
+One core-owned ordered schema defines persisted keys, defaults, accepted
+types/choices, and serialization order. Loading ignores unknown hand-edited
+keys; known malformed values remain reportable while boolean/number consumers
+apply their conservative fallback. `set`, save, and status conversion consult
+that schema. QML remains a contract consumer, not a second writable schema.
 
 The panel's default category display mirrors CLI defaults for a never-configured machine: packages, config, Omarchy, web apps, and plugins on; secrets off. Unknown consent values are presented as `ask`, matching the conservative CLI fallback.
 
@@ -104,7 +113,10 @@ Only the headless service instance schedules backups. It computes a deadline fro
 
 When due, the service calls the same porcelain backup path as the panel. The CLI owns locking, capture, scanning, commit, push, and state stamps. The scheduler does not claim success until the CLI process reports and exits.
 
-The panel-owned instance never starts the headless timer. It only displays `externallyBusy` when another ress process has created the running marker.
+The panel-owned instance never starts the headless timer. It only displays
+`externallyBusy` while the primary operation-lock owner has created the
+running marker. A dry run still takes the lock for a coherent plan but does not
+advertise machine mutation through that marker.
 
 ## Error rules
 

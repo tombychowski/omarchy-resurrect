@@ -11,12 +11,15 @@ remain manual evidence.
 ```bash
 ./tests/run.sh              # every case
 ./tests/run.sh aur          # just the ones whose name matches
+./tests/run.sh --jobs 4     # bounded parallel cases, reported in case order
+./tests/run.sh --jobs 1     # explicit sequential compatibility mode
 ```
 
-The baseline run for the documentation change on 2026-10-03 passed **21 cases
-and 575 assertions**. Treat those numbers as a recorded baseline, not a target
-to preserve by weakening or combining assertions; the current runner output is
-authoritative after tests change.
+The 2026-10-05 internal-cleanup evidence passed **47 cases and 1,137
+assertions** in both modes: 382 seconds with `--jobs 1` and 221 seconds with
+`--jobs 4` on the development machine. Treat counts as compatibility evidence
+and durations as feedback data, not targets to preserve by weakening assertions
+or correctness thresholds; current runner output remains authoritative.
 
 Each case runs in a throwaway `$HOME` with test doubles on `PATH` for `pacman`,
 `yay`, `sudo`, `systemctl`, `curl`, `git` and the `omarchy` CLI. Nothing outside
@@ -37,6 +40,51 @@ single-file checkout is being migrated, but once modules exist a parse error in
 any one names that exact repository-relative file and stops the run. Cases still
 invoke only `bin/ress`; sourced modules are implementation, not extra command
 surfaces.
+
+Every case line includes elapsed duration for feedback and comparison only;
+wall-clock time is never a pass/fail threshold. Parallel workers retain
+discovery/report order, and each case keeps its own `mktemp` home, fake machine,
+call log, and output. Sequential and bounded-parallel full runs must report the
+same case and assertion totals.
+
+`tests/check-structure.sh` checks the reviewed module-dependency map and
+dynamic-entrypoint allowlist, rejects duplicate/proven-unreachable functions,
+and catches selected reverse ownership edges. Its fixture adds an unreachable
+function and a machine-to-registry dependency to prove the gate is live. This
+is a conservative textual Bash check: dynamic dispatch is explicitly
+allowlisted, and the result is architecture evidence rather than a full shell
+call graph.
+
+The loadout scale fixture compares 10- and 50-resource human, porcelain and
+JSON results with deterministic command counts. A stable phase gets one package
+inventory, one active-theme observation and one registry-index build; jq growth
+is checked without making timing a correctness condition. Mutation-sensitive
+guards still reread live state.
+
+ShellCheck, `shfmt`, and `bashtate` are not installed in the current repository
+environment, and tests do not download development tools. No reproducible
+lint/format gate is therefore claimed here. The deterministic local gates are
+`bash -n` over all production Bash, the structure checker, focused/full cases,
+and mutation testing. A CI image may add pinned tool versions later; local tool
+availability alone is not behavioral proof.
+
+The lock cases use overlapping sandboxed processes rather than sequential file
+checks. They prove that a live operation's opaque running marker survives
+unrelated CLI exits, that dry-run locking has no visible marker, that a replaced
+marker is not removed by an old owner, and that a configuration-lock timeout
+leaves the config byte-for-byte unchanged. A separate queued-writer assertion
+proves successful setting updates reread and serialize under the same lock.
+Those CLI ownership guarantees are fully sandbox-automated. Whether the
+rendered panel visibly changes to and from its external-busy presentation
+remains part of the real-machine/QML boundary below.
+
+Credential and hostile-artifact cases use literal secret markers and symlinked
+control files inside the throwaway home. They assert the marker is absent from
+combined output and persisted config/vault/profile/registry state; they also
+prove manifest/profile/inventory refusal precedes the running marker and
+external mutation. Nested directory-link behavior is exercised with real
+`rsync --safe-links` against sandbox paths. Network authentication services
+and rendered omission notices remain outside this automated boundary.
 
 ## 2. Mutation testing
 

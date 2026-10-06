@@ -149,6 +149,7 @@ capture_omarchy() {
     name=$(basename "$theme")
     url=$(git -C "$theme" remote get-url origin 2>/dev/null || true)
     if [[ -n $url ]]; then
+      url=$(strip_credentials "$url")
       printf '%s\t%s\t%s\n' "$name" "$url" "$(git -C "$theme" rev-parse HEAD 2>/dev/null || true)" >>"$out/themes.tsv"
       # Same rule the restore applies, said where it can still be acted on.
       valid_git_remote "$url" ||
@@ -210,12 +211,16 @@ capture_webapps() {
   step_start webapps "Finding web apps"
 
   local n=0 stock=0 desktop icon name
-  local unrebuildable=()
+  local unrebuildable=() credentialed=()
   for desktop in "$HOME"/.local/share/applications/*.desktop; do
     [[ -f $desktop ]] || continue
     grep -q "omarchy-launch-webapp\|omarchy-launch-or-focus-webapp" "$desktop" || continue
     name=$(basename "$desktop")
     if package_owned_launcher "$desktop" "$name"; then stock=$((stock + 1)); continue; fi
+    if webapp_url_has_credentials "$(launcher_exec "$desktop")"; then
+      credentialed+=("${name%.desktop}")
+      continue
+    fi
     cp "$desktop" "$out/apps/"
     n=$((n + 1))
     # The launcher is recorded whatever its Exec line says: the vault is also a
@@ -236,6 +241,8 @@ capture_webapps() {
     note "$stock launcher(s) Omarchy ships were left out — a fresh install has them already"
   (( ${#unrebuildable[@]} == 0 )) || step_warn webapps \
     "$(plural "${#unrebuildable[@]}" "launcher") a restore cannot re-create (not a launcher URL with optional flags): ${unrebuildable[*]}"
+  (( ${#credentialed[@]} == 0 )) || step_warn webapps \
+    "$(plural "${#credentialed[@]}" "launcher") left out because its URL contains credentials: ${credentialed[*]}"
   return 0
 }
 
@@ -251,6 +258,7 @@ capture_plugins() {
     id=$(jq -r '.id // empty' "$dir/manifest.json" 2>/dev/null) || continue
     [[ -n $id ]] || continue
     url=$(git -C "$dir" remote get-url origin 2>/dev/null || true)
+    url=$(strip_credentials "$url")
     sha=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
     enabled=0
     if [[ -f $shell_json ]] && grep -qF "\"$id\"" "$shell_json"; then enabled=1; fi
@@ -399,7 +407,7 @@ secret_scan() {
   # -I skips binaries, so an encrypted blob or a font is never read as text.
   while IFS= read -r file; do
     [[ -n $file ]] && candidates+=("$file")
-  done < <(grep -rIlE --binary-files=without-match --exclude-dir=.git \
+  done < <(grep -rIlE --binary-files=without-match --exclude-dir=.git --exclude=secrets.tar.age \
     -e "${combined%|}" -- "${roots[@]}" 2>/dev/null || true)
   (( ${#candidates[@]} > 0 )) || return 1
 
@@ -531,7 +539,7 @@ cmd_backup() {
   # Before the commit, not after: a commit is the point at which a captured
   # credential becomes history, and history is what gets pushed.
   if [[ $(secret_scan_mode) != off ]]; then
-    if secret_scan "$VAULT/home" "$VAULT/omarchy"; then
+    if secret_scan "$VAULT"; then
       private_dir "$STATE_DIR"
       printf '%s\n' "$SECRET_FINDINGS" >"$STATE_DIR/secrets-found.txt"
       chmod 600 "$STATE_DIR/secrets-found.txt" 2>/dev/null || true

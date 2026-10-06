@@ -14,12 +14,55 @@ git_vault() { git -C "$VAULT" "$@"; }
 # Where this vault keeps its manifest. New vaults use ress.json; one written
 # before the rename is read where it lies, and moved on its next backup.
 manifest_path() {
-  [[ -f $VAULT/$VAULT_MANIFEST ]] && { printf '%s' "$VAULT/$VAULT_MANIFEST"; return 0; }
-  [[ -f $VAULT/$VAULT_MANIFEST_LEGACY ]] && { printf '%s' "$VAULT/$VAULT_MANIFEST_LEGACY"; return 0; }
+  local path
+  if [[ -e $VAULT/$VAULT_MANIFEST || -L $VAULT/$VAULT_MANIFEST ]]; then
+    path=$(safe_control_file "$VAULT" "$VAULT_MANIFEST") ||
+      die "vault manifest must be a contained regular file"
+    printf '%s' "$path"; return 0
+  fi
+  if [[ -e $VAULT/$VAULT_MANIFEST_LEGACY || -L $VAULT/$VAULT_MANIFEST_LEGACY ]]; then
+    path=$(safe_control_file "$VAULT" "$VAULT_MANIFEST_LEGACY") ||
+      die "vault manifest must be a contained regular file"
+    printf '%s' "$path"; return 0
+  fi
   printf '%s' "$VAULT/$VAULT_MANIFEST"
 }
 
-has_manifest() { [[ -f $VAULT/$VAULT_MANIFEST || -f $VAULT/$VAULT_MANIFEST_LEGACY ]]; }
+has_manifest() {
+  [[ -e $VAULT/$VAULT_MANIFEST || -L $VAULT/$VAULT_MANIFEST ||
+     -e $VAULT/$VAULT_MANIFEST_LEGACY || -L $VAULT/$VAULT_MANIFEST_LEGACY ]] || return 1
+  manifest_path >/dev/null
+}
+
+validate_vault_artifact() {
+  local relative path
+  for relative in \
+    packages/native.txt packages/foreign.txt plugins/plugins.tsv \
+    services/user-units.txt omarchy/themes.tsv omarchy/theme.name \
+    omarchy/background.name omarchy/shell.json omarchy/shell.toml \
+    secrets/secrets.tar.age; do
+    path="$VAULT/$relative"
+    [[ -e $path || -L $path ]] || continue
+    safe_control_file "$VAULT" "$relative" >/dev/null ||
+      die "vault control file $relative must be a contained regular file"
+  done
+
+  local dir
+  for relative in home omarchy webapps plugins packages services secrets; do
+    dir="$VAULT/$relative"
+    [[ -e $dir || -L $dir ]] || continue
+    safe_artifact_dir "$VAULT" "$relative" >/dev/null ||
+      die "vault directory $relative must be contained and must not be a symlink"
+  done
+
+  if [[ -d $VAULT/webapps/apps && ! -L $VAULT/webapps/apps ]]; then
+    while IFS= read -r -d '' path; do
+      relative="${path#"$VAULT/"}"
+      safe_control_file "$VAULT" "$relative" >/dev/null ||
+        die "vault launcher $relative must be a contained regular file"
+    done < <(find -P "$VAULT/webapps/apps" -maxdepth 1 \( -type f -o -type l \) -print0)
+  fi
+}
 
 # The vault's manifest as JSON, or null when its copy is not JSON at all. The
 # rest of the answer is still true, and a status command that answers nothing is

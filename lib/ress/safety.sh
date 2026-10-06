@@ -67,6 +67,51 @@ valid_git_remote() {
   return 1
 }
 
+# URL user information is transport-only. It may authenticate the immediate
+# request that received it, but it never belongs in config, a vault, a profile,
+# registry state, generated instructions, or terminal output.
+url_has_credentials() {
+  [[ $1 =~ ^[A-Za-z][A-Za-z0-9+.-]*://[^/@]+@ ]]
+}
+
+strip_credentials() {
+  local url="$1"
+  if url_has_credentials "$url"; then
+    url="${url%%://*}://${url#*://}"
+    url="${url%%://*}://${url#*@}"
+  fi
+  printf '%s' "$url"
+}
+
+valid_public_https() {
+  valid_https "$1" && ! url_has_credentials "$1"
+}
+
+# Resolve one repository-controlled scalar input without following a final
+# symlink or escaping through a symlinked parent. Missing files are simply not
+# returned; callers decide whether a particular control file is optional.
+safe_control_file() {
+  local root="$1" relative="$2" root_path candidate resolved
+  [[ -n $root && -n $relative && $relative != /* ]] || return 1
+  root_path=$(realpath -e -- "$root" 2>/dev/null) || return 1
+  candidate="$root/$relative"
+  [[ -f $candidate && ! -L $candidate ]] || return 1
+  resolved=$(realpath -e -- "$candidate" 2>/dev/null) || return 1
+  [[ $resolved == "$root_path"/* ]] || return 1
+  printf '%s' "$resolved"
+}
+
+safe_artifact_dir() {
+  local root="$1" relative="$2" root_path candidate resolved
+  [[ -n $root && -n $relative && $relative != /* ]] || return 1
+  root_path=$(realpath -e -- "$root" 2>/dev/null) || return 1
+  candidate="$root/$relative"
+  [[ -d $candidate && ! -L $candidate ]] || return 1
+  resolved=$(realpath -e -- "$candidate" 2>/dev/null) || return 1
+  [[ $resolved == "$root_path"/* ]] || return 1
+  printf '%s' "$resolved"
+}
+
 # ------------------------------------------------------- web app launchers
 #
 # A web app launcher is an Exec line, and Omarchy has written that line three
@@ -157,12 +202,24 @@ webapp_parts() {
   esac
 
   local url="${words[1]}" flags=() i
-  valid_https "$url" || return 1
+  valid_public_https "$url" || return 1
   for (( i = 2; i < ${#words[@]}; i++ )); do
     [[ ${words[i]} =~ $WEBAPP_FLAG_RE ]] || return 1
     flags+=("${words[i]}")
   done
   printf '%s\t%s\t%s' "${words[0]}" "$url" "${flags[*]:-}"
+}
+
+webapp_url_has_credentials() {
+  local words=() word
+  while IFS= read -r word; do [[ -n $word ]] && words+=("$word"); done \
+    < <(desktop_exec_words "$1")
+  (( ${#words[@]} >= 2 )) || return 1
+  case "${words[0]}" in
+    omarchy-launch-webapp|omarchy-launch-or-focus-webapp) ;;
+    *) return 1 ;;
+  esac
+  url_has_credentials "${words[1]}"
 }
 
 # The launcher line to hand the installer as its custom exec, rebuilt from the
@@ -254,15 +311,6 @@ normalize_source() {
   printf 'https://%s' "$src"
 }
 
-# A URL may carry a token (https://TOKEN@host/...). That is fine to use once and
-# wrong to write into a config file, so it is stripped before anything is saved
-# and before anything is printed.
-strip_credentials() {
-  local url="$1"
-  [[ $url =~ ^([a-z]+://)([^/@]*@)(.*)$ ]] && url="${BASH_REMATCH[1]}${BASH_REMATCH[3]}"
-  printf '%s' "$url"
-}
-
 # Two spellings of the same repository. Compared after credentials, a trailing
 # .git and a trailing slash are taken off, because none of the three changes
 # where the URL points.
@@ -277,6 +325,7 @@ same_remote() {
 # The paste-me form of a repo URL, for `ress share`.
 ress_link() {
   local url="$1"
+  url=$(strip_credentials "$url")
   url="${url%.git}"
   url="${url#git@github.com:}"
   url="${url#https://github.com/}"

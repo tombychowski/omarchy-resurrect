@@ -147,7 +147,10 @@ Credential scanning returns:
 }
 ```
 
-The matched secret is never present. Exit status is zero for no findings and non-zero when one or more findings exist.
+The matched secret is never present. The scan covers all captured plaintext
+below the vault root while excluding `.git` and
+`secrets/secrets.tar.age`. Exit status is zero for no findings and non-zero
+when one or more findings exist.
 
 ### Applied-loadout JSON
 
@@ -238,7 +241,7 @@ that identity can never be selected. Package `channels` contains `native`,
 
 Candidate refusal codes are bounded to `missing-manifest`, `unsafe-id`,
 `missing-remote`, `unsafe-remote`, `unpinned`, `unsupported-launcher`,
-`unsafe-name`, `unsafe-icon`, `local-only`, and `missing-theme`. A valid current
+`credential-url`, `unsafe-name`, `unsafe-icon`, `local-only`, and `missing-theme`. A valid current
 export can additionally report `missing` or `definition-mismatch`. An invalid
 current profile uses state `unavailable` with `invalid-profile`; no profile uses
 state `absent`. Applied presets independently use `valid` or `unavailable`,

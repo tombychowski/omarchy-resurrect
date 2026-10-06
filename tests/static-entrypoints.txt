@@ -1,0 +1,13 @@
+# Bash entrypoints reached through capture_$category / restore_$category.
+capture_config
+capture_omarchy
+capture_packages
+capture_plugins
+capture_secrets
+capture_webapps
+restore_config
+restore_omarchy
+restore_packages
+restore_plugins
+restore_secrets
+restore_webapps

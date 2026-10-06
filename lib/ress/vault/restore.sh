@@ -1,48 +1,10 @@
 #!/bin/bash
 #
-# Vault restore: progress, preview, AUR and unit consent, category replay, and
-# resumable restore orchestration.
-# Depends on core.sh, safety.sh, and vault/common.sh. Owns restore/AUR/unit run
-# state; used by restore. Definitions only at source time.
+# Vault restore category replay and resumable orchestration.
+# Depends on core.sh, safety.sh, machine/packages.sh, vault/common.sh,
+# restore-state.sh, and restore-preview.sh. Definitions only at source time.
 
 # =================================================================== RESTORE
-
-RESTORE_STATE=""
-RESTORE_FAILED=0
-FAILED_STEPS=()
-
-# Set by cmd_restore. "" leaves the decision to ENABLE_UNITS; --enable-units and
-# --no-enable-units override it for this run.
-UNITS_CHOICE=""
-# A vault fetched from a URL this machine has not used before. It is not less
-# trustworthy for being new — a fresh install restoring its owner's vault is
-# always first contact — but it is the case where nothing has been agreed to
-# yet, so nothing is assumed.
-FIRST_CONTACT=0
-
-step_done()      { grep -qxF "$1" "$RESTORE_STATE" 2>/dev/null; }
-mark_done()      { printf '%s\n' "$1" >>"$RESTORE_STATE"; }
-
-# A category can end without failing and without being finished: you were asked
-# whether to build seven AUR packages and said no. Marking that done would have
-# the next run skip the very step you deferred; marking it failed would call a
-# decision a fault. So it is neither — it is recorded here, reported at the end,
-# and left for the next run to offer again.
-PARTIAL_STEPS=()
-mark_partial() {
-  local category="$1" reason="$2" existing
-  for existing in "${PARTIAL_STEPS[@]:-}"; do
-    [[ $existing == "$category|"* ]] && return 0
-  done
-  PARTIAL_STEPS+=("$category|$reason")
-}
-was_partial() {
-  local entry
-  for entry in "${PARTIAL_STEPS[@]:-}"; do
-    [[ $entry == "$1|"* ]] && return 0
-  done
-  return 1
-}
 
 # Never clobber in silence. Anything restore overwrites is moved aside first,
 # so a restore onto a machine you actually use is reversible.
@@ -61,147 +23,6 @@ RSYNC_SAFE=(-a --safe-links --backup --suffix="$BAK_SUFFIX")
 
 # Names that never get built, whoever asks. Checked before the question, since
 # refusing is not a question.
-aur_denied() { merged_list aur-deny | grep -qxF -- "$1"; }
-
-# Which of these names actually exist on aur.archlinux.org. A name in a vault
-# with nothing behind it is the interesting one: a package renamed, deleted, or
-# never there — which is also what a typo and a squat look like from here.
-#
-# Not reaching the AUR is reported and never fatal. This annotates a list; it
-# does not gate one.
-AUR_KNOWN=""
-AUR_PROBED=0
-aur_probe() {
-  AUR_KNOWN=""
-  AUR_PROBED=0
-  have curl || return 1
-  local pending=("$@") chunk=() name encoded url out
-  while (( ${#pending[@]} > 0 )); do
-    chunk=("${pending[@]:0:40}")
-    pending=("${pending[@]:40}")
-    url="https://aur.archlinux.org/rpc/v5/info?"
-    for name in "${chunk[@]}"; do
-      # A `+` in a query string means a space, and plenty of package names have
-      # one. Everything else valid_pkg admits is safe unencoded.
-      encoded="${name//+/%2B}"
-      url+="arg%5B%5D=$encoded&"
-    done
-    # -g: the encoded brackets are part of the URL, not a curl range glob.
-    out=$(curl -gfsSL --max-time 15 -- "${url%&}" 2>/dev/null) || return 1
-    jq -e . >/dev/null 2>&1 <<<"$out" || return 1
-    AUR_KNOWN+=$'\n'$(jq -r '.results[]?.Name // empty' <<<"$out")
-  done
-  AUR_PROBED=1
-  return 0
-}
-
-aur_knows() { grep -qxF -- "$1" <<<"$AUR_KNOWN"; }
-
-# Which of these names the official repositories now carry. A package can move
-# from the AUR into extra, and once it has, building it from a PKGBUILD is the
-# wrong way to get it. One batched call: pacman prints what it knows and exits
-# non-zero for the rest, which is exactly the shape wanted here.
-IN_REPOS=""
-repo_probe() {
-  IN_REPOS=$(pacman -Si -- "$@" 2>/dev/null | sed -n 's/^Name[[:space:]]*: //p' || true)
-}
-
-# What to say about one name beyond the name itself. Empty for the ordinary
-# case, so the list stays readable and the odd entry stands out.
-aur_note() {
-  local name="$1"
-  (( AUR_PROBED )) && ! aur_knows "$name" && { printf 'not on aur.archlinux.org'; return 0; }
-  grep -qxF -- "$name" <<<"$IN_REPOS" && { printf 'now in the official repos'; return 0; }
-  printf ''
-}
-
-# build | review | skip — decided once, by the flag, then the setting, then the
-# person at the terminal. AUR_KEPT holds the names that survived the deny list.
-AUR_MODE="skip"
-AUR_KEPT=()
-aur_gate() {
-  local category="$1"; shift
-  local names=("$@")
-  AUR_KEPT=()
-  AUR_MODE="skip"
-
-  local name denied=()
-  for name in "${names[@]}"; do
-    if aur_denied "$name"; then denied+=("$name"); else AUR_KEPT+=("$name"); fi
-  done
-  (( ${#denied[@]} == 0 )) ||
-    step_warn "$category" "$(plural "${#denied[@]}" "AUR package") on your deny list: ${denied[*]}"
-  (( ${#AUR_KEPT[@]} > 0 )) || return 0
-
-  # Settled without a prompt?
-  local decision="${AUR_CHOICE:-}"
-  if [[ -z $decision ]]; then
-    case "${CFG[AUR]:-ask}" in
-      yes|1|on|true) decision=yes ;;
-      no|0|off|false) decision=no ;;
-      *) decision=ask ;;
-    esac
-  fi
-  if [[ $decision == yes ]]; then
-    AUR_MODE=$( (( AUR_REVIEW )) && printf 'review' || printf 'build' )
-    return 0
-  fi
-  if [[ $decision == no ]]; then
-    step_skip "$category" "$(plural "${#AUR_KEPT[@]}" "AUR package") skipped (AUR=no)"
-    return 0
-  fi
-  if (( PORCELAIN )) || [[ ! -t 0 ]]; then
-    step_skip "$category" "$(plural "${#AUR_KEPT[@]}" "AUR package") skipped — no terminal to ask at; pass --aur to build them"
-    return 0
-  fi
-
-  if ! aur_probe "${AUR_KEPT[@]}"; then
-    note "could not reach aur.archlinux.org to check these names"
-  fi
-  repo_probe "${AUR_KEPT[@]}"
-
-  printf '\n%s%s from the AUR:%s\n\n' "$c_bold" "$(plural "${#AUR_KEPT[@]}" package)" "$c_reset"
-  local note_text
-  for name in "${AUR_KEPT[@]}"; do
-    note_text=$(aur_note "$name")
-    if [[ -n $note_text ]]; then
-      printf '    %-32s %s%s%s\n' "$name" "$c_yellow" "$note_text" "$c_reset"
-    else
-      printf '    %s\n' "$name"
-    fi
-  done
-  printf '\n%sEach one is a PKGBUILD fetched from aur.archlinux.org and run here as it\nbuilds. Nothing signs them and nobody reviews them.%s\n\n' \
-    "$c_dim" "$c_reset"
-  printf '  %s[y]%s build them   %s[r]%s review each PKGBUILD first   %s[N]%s skip\n' \
-    "$c_green" "$c_reset" "$c_blue" "$c_reset" "$c_dim" "$c_reset"
-  local reply=""
-  read -r -p "  > " reply || reply=""
-  case "$reply" in
-    [yY]*) AUR_MODE="build" ;;
-    [rR]*) AUR_MODE="review" ;;
-    *)     AUR_MODE="skip"; step_skip "$category" "$(plural "${#AUR_KEPT[@]}" "AUR package") skipped" ;;
-  esac
-  return 0
-}
-
-# The two ways to run the helper. `build` is the unattended one: yay answers its
-# own prompts. `review` is yay's normal interactive flow, where it shows the
-# PKGBUILD and the diff since the last build and waits.
-aur_install() {
-  local category="$1"; shift
-  case "$AUR_MODE" in
-    build)
-      step_start "$category" "Building $(plural "$#" "AUR package")"
-      yay -S --needed --noconfirm --answerclean None --answerdiff None -- "$@"
-      ;;
-    review)
-      step_start "$category" "Building $(plural "$#" "AUR package") — yay will show each PKGBUILD"
-      yay -S --needed -- "$@"
-      ;;
-    *) return 1 ;;
-  esac
-}
-
 restore_packages() {
   local dir="$VAULT/packages"
   [[ -d $dir ]] || { step_skip packages "not in this vault"; return 0; }
@@ -456,19 +277,6 @@ restore_user_units() {
   return 0
 }
 
-# yes | no | ask — the flag wins, then the setting, and an unreadable setting
-# falls back to asking rather than to doing.
-units_decision_kind() {
-  case "${UNITS_CHOICE:-}" in
-    yes|no) printf '%s' "$UNITS_CHOICE"; return 0 ;;
-  esac
-  case "${CFG[ENABLE_UNITS]:-ask}" in
-    yes|1|on|true) printf 'yes' ;;
-    no|0|off|false) printf 'no' ;;
-    *) printf 'ask' ;;
-  esac
-}
-
 # What a restore would do with one row of themes.tsv, as an action word and a
 # reason. Both the dry run and the restore itself decide through this, so a
 # plan cannot promise something the restore then refuses — the rule that keeps
@@ -498,7 +306,11 @@ theme_action() {
     printf 'clone\t%s pinned to %s\n' "$url" "${sha:0:12}"
     return 0
   fi
-  [[ -d $VAULT/omarchy/themes/$name ]] && { printf 'copy\tfrom files in the vault\n'; return 0; }
+  if safe_artifact_dir "$VAULT" "omarchy/themes/$name" >/dev/null; then
+    printf 'copy\tfrom files in the vault\n'; return 0
+  fi
+  [[ -e $VAULT/omarchy/themes/$name || -L $VAULT/omarchy/themes/$name ]] &&
+    { printf 'refuse\tunsafe theme directory\n'; return 0; }
   printf 'missing\tno remote and no files in the vault\n'
 }
 
@@ -525,6 +337,7 @@ preview_omarchy() {
     local name url tsha action detail
     while IFS=$'\037' read -r name url tsha; do
       [[ -n $name ]] || continue
+      url=$(strip_credentials "$url")
       IFS=$'\t' read -r action detail < <(theme_action "$name" "$url" "$tsha")
       case "$action" in
         clone|copy) printf '    %-12s %-22s %s%s%s\n' theme "$(plain "$name")" "$c_dim" "$(plain "$detail")" "$c_reset" ;;
@@ -585,6 +398,7 @@ restore_omarchy() {
   if [[ -f $dir/themes.tsv ]]; then
     while IFS=$'\037' read -r name url tsha; do
       [[ -n $name ]] || continue
+      url=$(strip_credentials "$url")
       IFS=$'\t' read -r action detail < <(theme_action "$name" "$url" "$tsha")
       case "$action" in
         present) continue ;;
@@ -734,6 +548,7 @@ restore_plugins() {
     i=$((i + 1))
     progress plugins "$i" "$total"
     [[ -n $id ]] || continue
+    url=$(strip_credentials "$url")
     # `$id` is used as a directory name that is cloned into and, on failure,
     # removed. An id of `../../..` would take the removal with it.
     if ! valid_id "$id"; then
@@ -840,7 +655,9 @@ restore_secrets() {
   # The archive inside the blob is as untrusted as the vault around it: whoever
   # wrote it chose the member list. Unpack into a staging directory first so
   # nothing lands in $HOME until it has been looked at.
-  local work; work=$(mktemp -d)
+  local work
+  ress_make_temp_dir || { step_fail secrets "could not create decryption workspace"; RESTORE_FAILED=1; return 0; }
+  work="$RESS_TEMP_PATH"
   chmod 700 "$work" 2>/dev/null || true
   ( umask 077; : >"$work/blob.tar" )
   if ! age -d "${args[@]}" "$blob" >"$work/blob.tar" 2>/dev/null; then
@@ -871,129 +688,6 @@ restore_secrets() {
     find -P "$HOME/.ssh" -type f -exec chmod 600 {} + 2>/dev/null || true
   fi
   step_ok secrets "secrets restored with 0600 permissions"
-  return 0
-}
-
-# Packages first (everything else may need a binary), plugins before `omarchy`
-# so the restored shell.json is the last word on what is enabled.
-# Restoring a machine means restoring the things that machine runs. Names and
-# paths out of a vault are validated; file *contents* cannot be, so the honest
-# move is to count what will run and say so before asking.
-report_executable_content() {
-  local hooks=0 menus=0 scripts=0 units=0 autostart=0 plugins=0 git_themes=0
-  [[ -d $VAULT/omarchy/hooks ]] &&
-    hooks=$(find "$VAULT/omarchy/hooks" -type f ! -name '*.sample' 2>/dev/null | wc -l)
-  [[ -d $VAULT/omarchy/extensions ]] &&
-    menus=$(find "$VAULT/omarchy/extensions" -type f 2>/dev/null | wc -l)
-  [[ -d $VAULT/home/.local/bin ]] &&
-    scripts=$(find "$VAULT/home/.local/bin" -type f 2>/dev/null | wc -l)
-  [[ -d $VAULT/home/.config/systemd ]] &&
-    units=$(find "$VAULT/home/.config/systemd" -type f -name '*.service' 2>/dev/null | wc -l)
-  # Autostart is no longer captured by default, but a vault written before that
-  # — or by someone who added it back — still carries it, and every entry is a
-  # command that runs the next time you log in.
-  [[ -d $VAULT/home/.config/autostart ]] &&
-    autostart=$(find "$VAULT/home/.config/autostart" -type f -name '*.desktop' 2>/dev/null | wc -l)
-  # Plugins and git themes are not files in the vault, they are checkouts the
-  # restore fetches. The vault names them; the code arrives from upstream.
-  [[ -f $VAULT/plugins/plugins.tsv ]] && plugins=$(count_lines "$VAULT/plugins/plugins.tsv")
-  [[ -f $VAULT/omarchy/themes.tsv ]] &&
-    git_themes=$(awk -F'\t' '$2 != "" { n++ } END { print n + 0 }' "$VAULT/omarchy/themes.tsv" 2>/dev/null || echo 0)
-
-  (( hooks + menus + scripts + units + autostart + plugins + git_themes == 0 )) && return 0
-
-  # Built as lines first because this has two audiences: a person, who gets a
-  # block with a heading, and --porcelain, which is a protocol and must not have
-  # prose written into it. Neither audience should be told less than the other.
-  local lines=()
-  (( hooks > 0 ))      && lines+=("$(plural "$hooks" "Omarchy hook") — run automatically on update, boot and theme change")
-  (( menus > 0 ))      && lines+=("$(plural "$menus" "menu extension") — menu entries are shell commands")
-  (( scripts > 0 ))    && lines+=("$(plural "$scripts" script) into ~/.local/bin")
-  (( units > 0 ))      && lines+=("$(plural "$units" "systemd user unit")")
-  (( autostart > 0 ))  && lines+=("$(plural "$autostart" "autostart entry" "autostart entries") — started automatically when you log in")
-  (( plugins > 0 ))    && lines+=("$(plural "$plugins" "shell plugin") — cloned from git and loaded into the shell")
-  (( git_themes > 0 )) && lines+=("$(plural "$git_themes" "git theme") — cloned from git, sourced on every theme change")
-
-  local line
-  if (( PORCELAIN )); then
-    for line in "${lines[@]}"; do emit "LOG|will run: $line"; done
-    return 0
-  fi
-  printf '\n%sThis vault installs things this machine will run:%s\n' "$c_bold" "$c_reset"
-  for line in "${lines[@]}"; do printf '  %s\n' "$line"; done
-  printf '%sRestore only a vault you trust as much as the machine it came from.%s\n' "$c_dim" "$c_reset"
-  return 0
-}
-
-# `ress apply` shows the exact list before it asks. A restore asks the same
-# question about a bigger change, so it shows the same kind of list: the package
-# names this machine does not have, and the plugins that would be cloned. Read
-# through the same validators the restore itself uses, so the preview cannot
-# name anything the restore would go on to refuse.
-report_restore_preview() {
-  local names=() aur_names=() plugin_ids=() line
-  if [[ -f $VAULT/packages/native.txt || -f $VAULT/packages/foreign.txt ]]; then
-    local installed; installed=$(mktemp)
-    pacman -Qq 2>/dev/null | sort >"$installed" || true
-    local want; want=$(mktemp)
-    # Only list files that exist — `sort` exits non-zero on a missing operand.
-    [[ -f $VAULT/packages/native.txt ]] && sort -u -- "$VAULT/packages/native.txt" >"$want" || : >"$want"
-    while IFS= read -r line; do
-      [[ -n $line ]] || continue
-      valid_pkg "$line" && names+=("$line")
-    done < <(comm -23 "$want" "$installed" || true)
-    # Kept apart from the repo list all the way to the screen: one is a signed
-    # download, the other is a build, and the difference is the whole reason
-    # there is a second question later.
-    if [[ -f $VAULT/packages/foreign.txt ]]; then
-      sort -u -- "$VAULT/packages/foreign.txt" >"$want"
-      while IFS= read -r line; do
-        [[ -n $line ]] || continue
-        valid_pkg "$line" && aur_names+=("$line")
-      done < <(comm -23 "$want" "$installed" || true)
-    fi
-    rm -f "$installed" "$want"
-  fi
-  if [[ -f $VAULT/plugins/plugins.tsv ]]; then
-    local id url sha
-    while IFS=$'\037' read -r id url _ sha; do
-      [[ -n $id && -n $url ]] || continue
-      valid_id "$id" && valid_git_remote "$url" || continue
-      [[ -d $HOME/.config/omarchy/plugins/$id ]] && continue
-      # Mirror the pin rule, or the preview promises a plugin the restore skips.
-      if [[ -n $sha ]]; then
-        valid_sha "$sha" || continue
-      elif (( ! ALLOW_UNPINNED )); then
-        continue
-      fi
-      plugin_ids+=("$id")
-    done < <(tr '\t' '\037' <"$VAULT/plugins/plugins.tsv")
-  fi
-
-  (( ${#names[@]} + ${#aur_names[@]} + ${#plugin_ids[@]} == 0 )) && return 0
-
-  if (( PORCELAIN )); then
-    (( ${#names[@]} > 0 ))      && emit "LOG|will install ${#names[@]} from the Arch repos: ${names[*]}"
-    (( ${#aur_names[@]} > 0 ))  && emit "LOG|will build ${#aur_names[@]} from the AUR: ${aur_names[*]}"
-    (( ${#plugin_ids[@]} > 0 )) && emit "LOG|will clone ${#plugin_ids[@]} shell plugins: ${plugin_ids[*]}"
-    return 0
-  fi
-
-  printf '\n%sThis restore will install:%s\n' "$c_bold" "$c_reset"
-  if (( ${#names[@]} > 0 )); then
-    printf '  %s%s from the Arch repos%s\n' "$c_green" "$(plural "${#names[@]}" package)" "$c_reset"
-    printf '%s\n' "${names[@]}" | fmt -w 72 | sed 's/^/      /'
-  fi
-  if (( ${#aur_names[@]} > 0 )); then
-    printf '  %s%s built here from the AUR%s %s(asked about separately)%s\n' \
-      "$c_yellow" "$(plural "${#aur_names[@]}" package)" "$c_reset" "$c_dim" "$c_reset"
-    printf '%s\n' "${aur_names[@]}" | fmt -w 72 | sed 's/^/      /'
-  fi
-  if (( ${#plugin_ids[@]} > 0 )); then
-    printf '  %s%s%s\n' "$c_green" "$(plural "${#plugin_ids[@]}" "shell plugin")" "$c_reset"
-    printf '%s\n' "${plugin_ids[@]}" | fmt -w 72 | sed 's/^/      /'
-  fi
-  printf '\n'
   return 0
 }
 
@@ -1040,10 +734,12 @@ cmd_restore() {
   # configured one is very much touching something: it discards local commits
   # and repoints the remote. Preview against a throwaway clone instead.
   if [[ -n $from ]] && (( DRY_RUN )); then
-    DRYRUN_VAULT=$(mktemp -d)
+    ress_make_temp_dir || die "could not create dry-run vault workspace"
+    DRYRUN_VAULT="$RESS_TEMP_PATH"
     step_start clone "Cloning $(strip_credentials "$from") for preview"
     if git clone -q --depth 1 -- "$from" "$DRYRUN_VAULT/vault" 2>/dev/null; then
       VAULT="$DRYRUN_VAULT/vault"
+      git_vault remote set-url origin "$(strip_credentials "$from")" 2>/dev/null || true
       step_ok clone "previewing against a temporary copy; your vault is untouched"
     else
       rm -rf "$DRYRUN_VAULT"; die "could not clone $(strip_credentials "$from")"
@@ -1067,17 +763,28 @@ cmd_restore() {
     if [[ -d $VAULT/.git ]]; then
       step_start clone "Updating vault from $(strip_credentials "$from")"
       git_vault remote set-url origin "$from" 2>/dev/null || git_vault remote add origin "$from"
-      git_vault fetch -q --depth 1 origin && git_vault reset -q --hard FETCH_HEAD
+      if git_vault fetch -q --depth 1 origin; then
+        git_vault remote set-url origin "$(strip_credentials "$from")"
+        git_vault reset -q --hard FETCH_HEAD
+      else
+        git_vault remote set-url origin "$(strip_credentials "$from")" 2>/dev/null || true
+        die "could not fetch $(strip_credentials "$from")"
+      fi
       step_ok clone "vault updated"
     else
       step_start clone "Cloning $(strip_credentials "$from")"
       rm -rf "$VAULT"; mkdir -p "$(dirname "$VAULT")"
-      git clone -q --depth 1 -- "$from" "$VAULT" || die "could not clone $from"
+      if git clone -q --depth 1 -- "$from" "$VAULT"; then
+        git_vault remote set-url origin "$(strip_credentials "$from")"
+      else
+        rm -rf "$VAULT"
+        die "could not clone $(strip_credentials "$from")"
+      fi
       step_ok clone "cloned to $VAULT"
     fi
     # Remembered only after the restore itself is agreed to, below — answering
     # "no" should not leave the machine pointed somewhere new.
-    pending_remote="$from"
+    pending_remote="$(strip_credentials "$from")"
   fi
 
   # Fail on the missing tool now, with its package name, rather than halfway
@@ -1087,8 +794,9 @@ cmd_restore() {
   (( ${#missing[@]} == 0 )) ||
     die "missing: ${missing[*]} — run: sudo pacman -S --needed ${missing[*]}"
 
-  take_lock
   has_manifest || die "no vault at $VAULT — pass --from <git-url> or --vault <dir>"
+  validate_vault_artifact
+  take_lock
   local manifest; manifest=$(manifest_path)
   local schema; schema=$(jq -r '.schemaVersion // 0' "$manifest")
   valid_int "$schema" ||

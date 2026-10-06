@@ -18,17 +18,18 @@ loadout_json_view() {
 
 loadout_require() {
   local id="$1"
-  jq -e --arg id "$id" '.loadouts[] | select(.id == $id)' <<<"$REGISTRY" >/dev/null ||
-    die "no tracked loadout: $(plain "$id")"
+  [[ -n $(registry_loadout_json "$id") ]] || die "no tracked loadout: $(plain "$id")"
 }
 
 loadout_check_json() {
-  local wanted="${1:-}" loadouts='[]' loadout claims claim resource observation rows state attention claim_state cleanup health_state
+  local wanted="${1:-}" loadout claims claim resource observation rows state attention claim_state cleanup health_state
+  local loadout_rows=() resource_rows=()
+  machine_observation_snapshot_build
   while IFS= read -r loadout; do
-    claims=$(jq -c --arg id "$(jq -r '.id' <<<"$loadout")" '[.claims[] | select(.loadoutId == $id)]' <<<"$REGISTRY")
-    rows='[]'; attention=0
+    claims=$(registry_claims_json "$(jq -r '.id' <<<"$loadout")")
+    resource_rows=(); attention=0
     while IFS= read -r claim; do
-      resource=$(jq -c --arg id "$(jq -r '.resourceId' <<<"$claim")" '.resources[] | select(.id == $id)' <<<"$REGISTRY")
+      resource=$(registry_resource_json "$(jq -r '.resourceId' <<<"$claim")")
       observation=$(resource_inspect_json "$resource")
       state=$(jq -r '.state' <<<"$observation")
       claim_state=$(jq -r '.status' <<<"$claim"); cleanup=$(jq -r '.cleanupPolicy' <<<"$resource")
@@ -38,14 +39,17 @@ loadout_check_json() {
       else health_state="$state"
       fi
       [[ $health_state == present || $health_state == protected ]] || attention=$((attention + 1))
-      rows=$(jq -c --argjson resource "$resource" --argjson claim "$claim" --argjson observation "$observation" \
+      resource_rows+=("$(jq -nc --argjson resource "$resource" --argjson claim "$claim" --argjson observation "$observation" \
         --arg health "$health_state" \
-        '. + [($resource + {claimStatus:$claim.status,healthState:$health,currentState:$observation.state,currentEvidence:$observation.evidence})]' <<<"$rows")
+        '$resource + {claimStatus:$claim.status,healthState:$health,currentState:$observation.state,currentEvidence:$observation.evidence}')")
     done < <(jq -c '.[]' <<<"$claims")
-    loadouts=$(jq -c --argjson loadout "$loadout" --argjson resources "$rows" --argjson attention "$attention" \
-      '. + [($loadout | del(.profile) | . + {attentionCount:$attention,resources:$resources} |
-        if $attention > 0 and .state != "removal-pending" then .state="drifted" else . end)]' <<<"$loadouts")
+    rows=$(printf '%s\n' "${resource_rows[@]}" | jq -sc '.')
+    loadout_rows+=("$(jq -nc --argjson loadout "$loadout" --argjson resources "$rows" --argjson attention "$attention" \
+      '$loadout | del(.profile) | . + {attentionCount:$attention,resources:$resources} |
+        if $attention > 0 and .state != "removal-pending" then .state="drifted" else . end')")
   done < <(jq -c --arg id "$wanted" '.loadouts[] | select($id == "" or .id == $id)' <<<"$REGISTRY")
+  local loadouts
+  loadouts=$(printf '%s\n' "${loadout_rows[@]}" | jq -sc '.')
   jq -nc --argjson loadouts "$loadouts" '{healthy:(all($loadouts[]; .attentionCount == 0)),loadouts:$loadouts}'
 }
 
@@ -59,7 +63,7 @@ registry_recover_operation() {
     rid=$(jq -r '.resourceId' <<<"$action")
     resource=$(jq -c --arg id "$rid" '.resources[] | select(.id == $id)' <<<"$REGISTRY")
     [[ -n $resource ]] || continue
-    observation=$(resource_inspect_json "$resource"); state=$(jq -r '.state' <<<"$observation")
+    observation=$(resource_inspect_json "$resource" live); state=$(jq -r '.state' <<<"$observation")
     if [[ $kind == remove ]]; then
       if [[ $state == missing ]]; then
         next=$(jq -c --arg rid "$rid" '.operation.actions |= map(if .resourceId == $rid then .state="done" else . end)' <<<"$REGISTRY")
@@ -103,6 +107,7 @@ registry_recover_operation() {
 repair_loadout() {
   local wanted="${1:-}" check plan='[]' loadout claim resource observation state item actions id
   [[ -z $wanted ]] || loadout_require "$wanted"
+  machine_observation_snapshot_build
   while IFS= read -r loadout; do
     id=$(jq -r '.id' <<<"$loadout")
     while IFS= read -r claim; do
@@ -164,7 +169,7 @@ repair_loadout() {
         apply_one_resource "$id" "$(jq -c '.item' <<<"$entry")" repair
         continue
       fi
-      observation=$(resource_inspect_json "$(jq -c --arg rid "$rid" '.resources[] | select(.id == $rid)' <<<"$REGISTRY")")
+      observation=$(resource_inspect_json "$(jq -c --arg rid "$rid" '.resources[] | select(.id == $rid)' <<<"$REGISTRY")" live)
       evidence=$(jq -c '.evidence' <<<"$observation")
       if [[ $(jq -r '.state' <<<"$observation") == present ]]; then
         registry_set_claim_result "$id" "$rid" healthy present "$evidence"
@@ -174,6 +179,7 @@ repair_loadout() {
     done < <(jq -c 'sort_by(if .item.kind == "theme-active" then 1 else 0 end)[]' <<<"$scoped")
     registry_finish_operation
   done < <(jq -r '.[].loadoutId' <<<"$plan" | sort -u)
+  machine_observation_snapshot_reset
   check=$(loadout_check_json "$wanted")
   if [[ $(jq -r '.healthy' <<<"$check") == true ]]; then emit "DONE|ok|repair complete"; return 0; fi
   emit "DONE|partial|repair finished with unresolved resources"
@@ -183,6 +189,7 @@ repair_loadout() {
 remove_loadout() {
   local id="$1" decision="${2:-}" claim rid resource observation state cleanup others classification plan='[]' actions next failures=0 rc
   loadout_require "$id"
+  machine_observation_snapshot_build
   while IFS= read -r claim; do
     rid=$(jq -r '.resourceId' <<<"$claim")
     resource=$(jq -c --arg rid "$rid" '.resources[] | select(.id == $rid)' <<<"$REGISTRY")
@@ -241,13 +248,14 @@ remove_loadout() {
 
 update_loadout() {
   local id="$1" source="${2:-}" decision="${3:-}" old new_profile digest new_resources old_ids new_ids retained added withdrawn plan='[]'
-  local rid item resource definition observation action status registry_resource next now precedence failures=0 rc
+  local rid item resource definition observation action status next now precedence failures=0 rc
   loadout_require "$id"
   old=$(jq -c --arg id "$id" '.loadouts[] | select(.id == $id)' <<<"$REGISTRY")
   [[ -n $source ]] || source=$(jq -r '.source' <<<"$old")
   [[ -n $source ]] || die "this loadout has no reusable source; pass SOURCE"
   source=$(normalize_source "$source")
-  APPLY_WORK=$(mktemp -d)
+  ress_make_temp_dir || die "could not create update workspace"
+  APPLY_WORK="$RESS_TEMP_PATH"
   fetch_profile "$source" "$APPLY_WORK"
   new_profile="$APPLY_WORK/normalized.json"
   normalize_profile "$APPLY_WORK/profile.json" "$new_profile"
@@ -348,13 +356,13 @@ cmd_loadout_mutation() {
       ;;
     repair)
       local id="${1:-}"; [[ $# -le 1 ]] || die "usage: ress loadout repair [ID]"
-      ensure_loadout_lock; registry_load; registry_recover_operation
+      ensure_operation_lock; registry_load; registry_recover_operation
       repair_loadout "$id"
       ;;
     remove)
       local id="${1:-}" decision=""; [[ -n $id ]] || die "usage: ress loadout remove ID [--keep-modified|--remove-modified]"; shift || true
       while (( $# )); do case "$1" in --keep-modified) decision=keep;; --remove-modified) decision=remove;; *) die "unknown loadout remove option: $1";; esac; shift; done
-      ensure_loadout_lock; registry_load; registry_recover_operation
+      ensure_operation_lock; registry_load; registry_recover_operation
       remove_loadout "$id" "$decision"
       ;;
     update)
@@ -367,7 +375,7 @@ cmd_loadout_mutation() {
         esac
         shift
       done
-      ensure_loadout_lock; registry_load; registry_recover_operation
+      ensure_operation_lock; registry_load; registry_recover_operation
       update_loadout "$id" "$source" "$decision"
       ;;
   esac

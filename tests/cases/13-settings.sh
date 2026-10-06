@@ -47,10 +47,18 @@ done
 # A hand-edited config with a nonsense value still loads, and reads as the safe
 # default rather than refusing to run at all.
 printf 'AUR=whatever\nENABLE_UNITS=whatever\nSECRET_SCAN=whatever\n' >>"$CONFIG"
+printf 'FUTURE_UNKNOWN_SETTING=must-not-survive\n' >>"$CONFIG"
 ress status
 assert_ok "a config with a bad value still loads"
 ress status --json
 assert_equals "$(jq -r '.settings.aur' <<<"$OUT")" "whatever" "status reports what is in the file"
+ress set AUTO_PUSH=1
+assert_ok "a known update rewrites a hand-edited config"
+assert_file_lacks "$CONFIG" "FUTURE_UNKNOWN_SETTING" "unknown hand-edited keys are ignored"
+
+expected_order='VAULT REMOTE AUTO_BACKUP AUTO_INTERVAL_HOURS AUTO_PUSH INCLUDE_PACKAGES INCLUDE_CONFIG INCLUDE_OMARCHY INCLUDE_WEBAPPS INCLUDE_PLUGINS INCLUDE_SECRETS SECRETS_MODE SECRETS_RECIPIENT PROFILE_URL ENABLE_UNITS AUR SECRET_SCAN CAPTURE_AUTOSTART'
+actual_order=$(sed -n 's/^\([A-Z_]*\)=.*/\1/p' "$CONFIG" | tr '\n' ' ' | sed 's/ $//')
+assert_equals "$actual_order" "$expected_order" "the schema owns stable serialization order"
 
 VAULT=$(make_vault)
 printf 'somepkg\n' >"$VAULT/packages/foreign.txt"
