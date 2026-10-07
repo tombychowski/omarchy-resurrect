@@ -36,6 +36,12 @@ function stripCredentials(url) {
   return String(url || "").replace(/^([a-z][a-z0-9+.-]*:\/\/)[^\/@]*@/, "$1")
 }
 
+function isRessLocation(path) {
+  var value = String(path || "").replace(/\/+$/, "")
+  return /(^|\/)ress(\/|$)/.test(value) || /\/\.local\/share\/resurrect(\/|$)/.test(value) ||
+    /\/\.config\/resurrect(\/|$)/.test(value) || /\/\.local\/state\/resurrect(\/|$)/.test(value)
+}
+
 function plural(n, one, many) {
   return n + " " + (n === 1 ? one : (many || one + "s"))
 }
@@ -66,9 +72,134 @@ function parseRecord(line) {
     case "STEP":     return { type: "step", category: parts[1], state: parts[2], message: parts.slice(3).join("|") }
     case "PROGRESS": return { type: "progress", category: parts[1], done: Number(parts[2]), total: Number(parts[3]) }
     case "LOG":      return { type: "log", message: parts.slice(1).join("|") }
+    case "SYNC":
+      if (parts[1] !== "1") return null
+      return { type: "sync", schemaVersion: 1, status: parts[2], ahead: Number(parts[3]),
+        behind: Number(parts[4]), fetchOk: parts[5] === "true", performed: parts[6],
+        actionOk: parts[7] === "true", reason: parts.slice(8).join("|") }
+    case "PORT":
+      if (parts[1] !== "1") return null
+      return { type: "port", schemaVersion: 1, operation: parts[2], artifactType: parts[3],
+        compatible: parts[4] === "true", published: parts[5] === "true",
+        reason: parts.slice(6).join("|") }
+    case "PORT_IDENTITY": return { type: "portIdentity", values: parts.slice(1) }
+    case "PORT_REVISION": return { type: "portRevision", values: parts.slice(1) }
+    case "PORT_LOSS": return { type: "portLoss", values: parts.slice(1) }
     case "DONE":     return { type: "done", state: parts[1], message: parts.slice(2).join("|") }
   }
   return null
+}
+
+function versioned(value, kind) {
+  return !!value && value.schemaVersion === 1 && value.kind === kind
+}
+
+function nonemptyString(value) {
+  return typeof value === "string" && value.length > 0
+}
+
+function nullableCommit(value) {
+  return value === null || (typeof value === "string" && (/^[0-9a-f]{40}$/).test(value))
+}
+
+var REPOSITORY_TYPES = ["loadouts", "vault"]
+var SYNC_STATES = ["equal", "local-ahead", "remote-ahead", "divergent", "invalid-remote",
+  "invalid-repository", "no-local-history", "fetch-failed"]
+
+function parseRepositoryList(value) {
+  if (!versioned(value, "montage-repository-list") || typeof value.revision !== "number" ||
+      !Array.isArray(value.repositories)) return null
+  var names = {}
+  for (var i = 0; i < value.repositories.length; i++) {
+    var item = value.repositories[i]
+    if (!item || !nonemptyString(item.name) || names[item.name] ||
+        REPOSITORY_TYPES.indexOf(item.type) < 0 || !nonemptyString(item.path) ||
+        typeof item.id !== "string" || typeof item.remote !== "string" ||
+        typeof item.valid !== "boolean" || !nonemptyString(item.status)) return null
+    names[item.name] = true
+  }
+  return value
+}
+
+function parseLoadoutCatalog(value) {
+  if (!versioned(value, "montage-loadout-catalog") || !nonemptyString(value.repositoryId) ||
+      !nullableCommit(value.repositoryCommit) || !Array.isArray(value.items) ||
+      !Array.isArray(value.invalid)) return null
+  var ids = {}
+  for (var i = 0; i < value.items.length; i++) {
+    var item = value.items[i]
+    if (!item || !nonemptyString(item.id) || ids[item.id] || !nonemptyString(item.name) ||
+        !nonemptyString(item.repositoryId) || item.repositoryId !== value.repositoryId ||
+        item.repositoryCommit !== value.repositoryCommit || !nonemptyString(item.digest)) return null
+    ids[item.id] = true
+  }
+  for (var j = 0; j < value.invalid.length; j++) {
+    var invalid = value.invalid[j]
+    if (!invalid || !nonemptyString(invalid.id) || !nonemptyString(invalid.reason)) return null
+  }
+  return value
+}
+
+function parseBackupList(value) {
+  if (!versioned(value, "montage-backup-list") || !nonemptyString(value.repositoryId) ||
+      !Array.isArray(value.backups)) return null
+  var commits = {}
+  for (var i = 0; i < value.backups.length; i++) {
+    var backup = value.backups[i]
+    if (!backup || !(/^[0-9a-f]{40}$/).test(backup.commit || "") || commits[backup.commit] ||
+        !nonemptyString(backup.createdAt) || !Array.isArray(backup.labels) ||
+        !backup.counts || !backup.sourceMachine) return null
+    commits[backup.commit] = true
+  }
+  return value
+}
+
+function parseRetentionResult(value) {
+  if (!versioned(value, "montage-backup-retention") || !nonemptyString(value.repositoryId) ||
+      typeof value.keep !== "number" || typeof value.changed !== "boolean" ||
+      !Array.isArray(value.kept) || !Array.isArray(value.removed) ||
+      !Array.isArray(value.protectedLabels) || typeof value.blocked !== "boolean" ||
+      typeof value.remoteDivergence !== "boolean") return null
+  return value
+}
+
+function parseSyncResult(value) {
+  if (!versioned(value, "montage-repository-sync") || !nonemptyString(value.repositoryId) ||
+      REPOSITORY_TYPES.indexOf(value.repositoryType) < 0 || SYNC_STATES.indexOf(value.status) < 0 ||
+      typeof value.ahead !== "number" || typeof value.behind !== "number" ||
+      !value.fetch || typeof value.fetch.ok !== "boolean") return null
+  if (value.remote && stripCredentials(value.remote) !== value.remote) return null
+  return value
+}
+
+function parsePortReport(value) {
+  if (!versioned(value, "montage-port-report") || !nonemptyString(value.operation) ||
+      !nonemptyString(value.artifactType) || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(value.artifactType) ||
+      !nonemptyString(value.format) || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(value.format) ||
+      typeof value.compatible !== "boolean" ||
+      !Array.isArray(value.selectedRevisions) || !Array.isArray(value.warnings) ||
+      !Array.isArray(value.losses) || !Array.isArray(value.mutations) ||
+      !nonemptyString(value.source)) return null
+  return value
+}
+
+// One vocabulary for the repository surfaces. Consumers pass only validated
+// CLI results; null means invalid/unavailable rather than an empty catalog.
+function repositoryPanelState(loading, repositories, selected, content, sync) {
+  if (loading) return "loading"
+  if (!repositories) return "invalid"
+  if (repositories.repositories.length === 0) return "empty"
+  if (!selected) return "attention"
+  if (!selected.valid || !content) return "invalid"
+  if (sync && sync.status === "divergent") return "divergent"
+  if (sync && sync.status === "remote-ahead") return "stale"
+  if (sync && ["fetch-failed", "invalid-remote", "invalid-repository", "no-local-history"].indexOf(sync.status) >= 0)
+    return "attention"
+  if (selected.type === "loadouts") {
+    if (content.invalid.length > 0) return "attention"
+    if (content.items.length === 0) return "empty"
+  } else if (selected.type === "vault" && content.backups.length === 0) return "empty"
+  return "healthy"
 }
 
 var LOADOUT_STATES = ["healthy", "pending", "drifted", "conflicting", "removal-pending", "unavailable"]
@@ -95,7 +226,7 @@ function resourceHealth(state) {
 // Consumer validation stays deliberately small and strict. A malformed CLI
 // answer is unavailable state, never an invented empty/healthy dashboard.
 function parseLoadoutList(value) {
-  if (!value || !Array.isArray(value.loadouts)) return null
+  if (!versioned(value, "montage-applied-loadout-list") || !Array.isArray(value.loadouts)) return null
   var out = []
   for (var i = 0; i < value.loadouts.length; i++) {
     var item = value.loadouts[i]
@@ -108,7 +239,8 @@ function parseLoadoutList(value) {
 }
 
 function parseLoadoutCheck(value) {
-  if (!value || typeof value.healthy !== "boolean" || !Array.isArray(value.loadouts)) return null
+  if (!versioned(value, "montage-loadout-check") ||
+      typeof value.healthy !== "boolean" || !Array.isArray(value.loadouts)) return null
   var out = []
   for (var i = 0; i < value.loadouts.length; i++) {
     var item = value.loadouts[i]
@@ -190,7 +322,7 @@ function uniqueStrings(values) {
 // The composer accepts one complete, versioned CLI answer or no answer. It
 // never fills holes by reading package, profile, or registry state itself.
 function parseShareCatalog(value) {
-  if (!value || value.schemaVersion !== 1 || !Array.isArray(value.resources) ||
+  if (!versioned(value, "montage-share-catalog") || !Array.isArray(value.resources) ||
       !value.currentExport || !value.presets || !value.counts || !value.limits ||
       value.limits.themes !== 1)
     return null

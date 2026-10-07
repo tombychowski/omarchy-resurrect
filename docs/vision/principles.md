@@ -4,7 +4,7 @@ These principles constrain product and engineering decisions. The linked OpenSpe
 
 ## The user owns the state
 
-Vaults, profiles, configuration, and progress state remain inspectable local files. Network storage is optional, and remote credentials are never a prerequisite for using ress. This is design guidance reflected by the vault-capture and loadout-sharing capabilities.
+Vaults, profiles, configuration, and progress state remain inspectable local files. Network storage is optional, and remote credentials are never a prerequisite for using Montage. This is design guidance reflected by the vault-capture and loadout-sharing capabilities.
 
 ## Use the least-powerful representation
 
@@ -28,7 +28,7 @@ Credential-shaped files are excluded from ordinary capture, captured content is 
 
 ## Report truth, including omissions
 
-ress should name what it captured, skipped, refused, deferred, or cannot reconstruct. Verification must distinguish a missing restorable item from an inventory item that never could travel. See vault-capture, machine-verification, and cli-consumer-protocol.
+Montage should name what it captured, skipped, refused, deferred, or cannot reconstruct. Verification must distinguish a missing restorable item from an inventory item that never could travel. See vault-capture, machine-verification, and cli-consumer-protocol.
 
 ## The CLI is authoritative
 
@@ -38,6 +38,11 @@ The CLI owns machine inspection, validation, mutation, and stable consumer outpu
 
 External formats have versions and defined migration boundaries. Unrecognized or hostile versions are refused before mutation rather than guessed at. See schema-compatibility.
 
+Interoperability never creates shared live ownership. Legacy artifacts are
+inspected and ported between separate paths, with explicit loss and self-plugin
+decisions. Native repositories, history, locks, configuration, and applied
+ownership remain Montage-only.
+
 ## Stay intentionally narrow
 
-ress reconstructs Omarchy setup state. It should not grow into a general data-backup system, arbitrary script runner, secrets manager, or remote orchestration service. This is design guidance derived from the [vision](vision.md).
+Montage reconstructs Omarchy setup state. It should not grow into a general data-backup system, arbitrary script runner, secrets manager, or remote orchestration service. This is design guidance derived from the [vision](vision.md).

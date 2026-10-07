@@ -28,18 +28,18 @@ ID1=$(jq -r '.loadouts[]|select(.name=="Theme-One")|.id' "$REGISTRY")
 ID2=$(jq -r '.loadouts[]|select(.name=="Theme-Two")|.id' "$REGISTRY")
 assert_equals "$(jq -r '.baseline.activeTheme' "$REGISTRY")" "baseline" "theme symlink compatibility supplies the baseline"
 assert_equals "$(<"$HOME/.local/state/omarchy/current/theme.name")" "theme-two" "last applied theme wins"
-ress loadout check --json
+mntg loadout check --json
 assert_ok "a superseded theme request does not make its loadout drifted"
 assert_output '"healthy": true'
 assert_equals "$(jq -r --arg id "$ID1" '.loadouts[] | select(.id == $id) | .resources[] | select(.kind == "theme-active") | .currentEvidence.effective' <<<"$OUT")" \
   "false" "lower-precedence theme request is healthy standby intent"
 
-: >"$CALLS"; ress loadout remove --yes "$ID2"
+: >"$CALLS"; mntg loadout remove --yes "$ID2"
 assert_ok "removing effective request falls back to remaining loadout"
 assert_called "omarchy theme set theme-one"
 assert_called "omarchy theme remove theme-two"
 
-: >"$CALLS"; ress loadout remove --yes "$ID1"
+: >"$CALLS"; mntg loadout remove --yes "$ID1"
 assert_ok "removing final request restores baseline"
 assert_called "omarchy theme set baseline"
 assert_called "omarchy theme remove theme-one"
@@ -48,7 +48,7 @@ assert_called "omarchy theme remove theme-one"
 apply_yes "$P1"; ID1=$(first_loadout_id)
 machine_builtin_theme external
 printf 'external\n' >"$HOME/.local/state/omarchy/current/theme.name"; : >"$CALLS"
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_ok "external active-theme override is preserved"
 assert_not_called "omarchy theme set" "cleanup does not override an external selection"
 
@@ -64,10 +64,10 @@ ID1=$(jq -r '.loadouts[]|select(.name=="Theme-One")|.id' "$REGISTRY")
 ID3=$(jq -r '.loadouts[]|select(.name=="Theme-One-Shared")|.id' "$REGISTRY")
 assert_equals "$(jq -r '.resources[]|select(.id=="theme-install:theme-one")|.cleanupPolicy' "$REGISTRY")" "retain" \
   "pre-existing installed theme remains protected"
-: >"$CALLS"; ress loadout remove --yes "$ID1"
+: >"$CALLS"; mntg loadout remove --yes "$ID1"
 assert_ok "removing one shared theme claimant releases only its claims"
 assert_not_called "omarchy theme remove theme-one" "shared installed theme remains"
-ress loadout remove --yes "$ID3"
+mntg loadout remove --yes "$ID3"
 assert_ok "final pre-existing theme claimant is released without cleanup"
 assert_dir "$HOME/.config/omarchy/themes/theme-one" "pre-existing theme files remain"
 
@@ -76,10 +76,10 @@ rm -f "$REGISTRY"; rm -rf "$HOME/.config/omarchy/themes/theme-one"
 printf 'baseline\n' >"$HOME/.local/state/omarchy/current/theme.name"
 apply_yes "$P1"; ID1=$(first_loadout_id)
 printf 'local change\n' >>"$HOME/.config/omarchy/themes/theme-one/theme.conf"
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_exit 2 "changed installed theme requires a decision"
 assert_dir "$HOME/.config/omarchy/themes/theme-one" "changed theme is preserved"
-ress loadout remove --yes "$ID1" --keep-modified
+mntg loadout remove --yes "$ID1" --keep-modified
 assert_ok "keeping a changed theme relinquishes cleanup authority"
 
 # Already-missing theme content is released without reinstalling or deleting it.
@@ -88,7 +88,7 @@ printf 'baseline\n' >"$HOME/.local/state/omarchy/current/theme.name"
 apply_yes "$P1"; ID1=$(first_loadout_id)
 rm -rf "$HOME/.config/omarchy/themes/theme-one"
 printf 'baseline\n' >"$HOME/.local/state/omarchy/current/theme.name"; : >"$CALLS"
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_ok "already-missing theme cleanup completes"
 assert_not_called "omarchy theme remove theme-one" "already-missing theme is not removed twice"
 
@@ -96,11 +96,11 @@ assert_not_called "omarchy theme remove theme-one" "already-missing theme is not
 rm -f "$REGISTRY"
 apply_yes "$P1"; ID1=$(first_loadout_id)
 printf 'theme-one\n' >"$FAKE_STATE/fail-theme-remove.txt"
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_fails "theme cleanup failure remains resumable"
 assert_equals "$(jq -r '.loadouts[0].state' "$REGISTRY")" "removal-pending" "failed theme cleanup remains tracked"
 : >"$FAKE_STATE/fail-theme-remove.txt"
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_ok "theme cleanup resumes after delegated failure clears"
 
 # If the recorded fallback is unavailable, removal preserves the active theme
@@ -110,7 +110,7 @@ machine_builtin_theme baseline
 printf 'baseline\n' >"$HOME/.local/state/omarchy/current/theme.name"
 apply_yes "$P1"; ID1=$(first_loadout_id)
 rm -rf "$OMARCHY_PATH/themes/baseline"; : >"$CALLS"
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_fails "unavailable theme fallback leaves removal pending"
 assert_equals "$(<"$HOME/.local/state/omarchy/current/theme.name")" "theme-one" "active theme is preserved when fallback cannot load"
 assert_dir "$HOME/.config/omarchy/themes/theme-one" "active theme files are not deleted without a fallback"

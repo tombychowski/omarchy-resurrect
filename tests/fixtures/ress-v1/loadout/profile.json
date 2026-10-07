@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "kind": "omarchy-loadout",
+  "name": "Frozen Ress loadout",
+  "author": "Fixture Author",
+  "description": "Portable Ress v1 leaf",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "omarchy": "4.0.0",
+  "packages": {"native": ["fd", "ripgrep"], "aur": ["example-bin"]},
+  "plugins": [
+    {"id": "example.widget", "url": "https://github.com/example/widget", "commit": "0123456789abcdef0123456789abcdef01234567"}
+  ],
+  "webapps": [
+    {"name": "Example", "url": "https://example.com/", "icon": "example"}
+  ],
+  "theme": {"name": "nord", "url": "https://github.com/example/nord", "commit": "89abcdef0123456789abcdef0123456789abcdef"}
+}
+

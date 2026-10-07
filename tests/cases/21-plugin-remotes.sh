@@ -26,12 +26,12 @@ git -C "$HOME/.config/omarchy/themes/local-theme" add -A
 git -C "$HOME/.config/omarchy/themes/local-theme" -c commit.gpgsign=false commit -q -m theme
 git -C "$HOME/.config/omarchy/themes/local-theme" remote add origin file:///tmp/themes/local-theme
 
-ress init >/dev/null
-VAULT="$XDG_DATA_HOME/ress/vault"
+mntg init >/dev/null
+VAULT="$XDG_DATA_HOME/montage/vault"
 
 # ---- 1. the capture says which ones will not travel ------------------------
 
-ress backup -m remotes
+mntg backup -m remotes
 assert_ok "a backup beside remotes a restore will not take"
 assert_output "will not be restored" "the capture says a plugin will not travel"
 assert_output "local.checkout" "and names it"
@@ -43,7 +43,7 @@ assert_file_contains "$VAULT/plugins/plugins.tsv" "local.checkout" \
 
 # ---- 2. verify does not ask for what a restore cannot do -------------------
 
-ress --vault "$VAULT" verify --json
+mntg --vault "$VAULT" verify --json
 assert_ok "verify passes: everything it can count is here"
 assert_equals "$(jq -r '.categories.plugins.want' <<<"$OUT")" "1" \
   "only the plugin with a remote a restore can clone is counted"
@@ -53,6 +53,6 @@ assert_equals "$(jq -r '.categories.plugins.missing | length' <<<"$OUT")" "0" \
 assert_equals "$(jq -r '.categories.plugins.refused | sort | join(",")' <<<"$OUT")" \
   "hand.made,local.checkout" "the two that cannot be re-cloned are refused instead"
 
-ress --vault "$VAULT" verify
+mntg --vault "$VAULT" verify
 assert_output "2 entries a restore cannot rebuild" "and the text says so in English"
 assert_output "hand.made" "naming them"

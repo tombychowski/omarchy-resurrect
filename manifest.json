@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "id": "tsouth89.resurrect",
-  "name": "ress",
-  "version": "1.2.0",
-  "author": "Tyler South",
+  "id": "tombychowski.montage",
+  "name": "montage",
+  "version": "1.0.0",
+  "author": "Tom Bychowski",
   "license": "MIT",
-  "description": "Capture this machine \u2014 packages, dotfiles, themes, web apps, plugins \u2014 and replay it onto a fresh Omarchy install. Share the loadout as a link.",
-  "homepage": "https://github.com/btsouth/omarchy-resurrect",
+  "description": "Capture and restore an Omarchy machine with private vault history, multi-loadout repositories, and explicit Ress v1 porting.",
+  "homepage": "https://github.com/tombychowski/omarchy-montage",
   "kinds": [
     "bar-widget",
     "service"
@@ -16,12 +16,12 @@
     "service": "Service.qml"
   },
   "barWidget": {
-    "displayName": "ress",
-    "description": "Backup freshness at a glance, with one button to capture this machine and one to bring it back.",
+    "displayName": "Montage",
+    "description": "Backup freshness, native repository history, loadout composition, synchronization, and explicit restore or port handoff.",
     "category": "System",
     "aliases": [
-      "ress",
-      "resurrect",
+      "montage",
+      "mntg",
       "backup",
       "restore"
     ],

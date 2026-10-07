@@ -12,23 +12,23 @@ ID1=$(jq -r '.loadouts[]|select(.name=="Remove-A")|.id' "$REGISTRY")
 ID2=$(jq -r '.loadouts[]|select(.name=="Remove-B")|.id' "$REGISTRY")
 
 BEFORE=$(sha256sum "$REGISTRY" | awk '{print $1}')
-ress loadout remove --dry-run "$ID1"
+mntg loadout remove --dry-run "$ID1"
 assert_ok "removal dry run previews all claims"
 assert_output "RETAIN  package:alpha"
 assert_output "RELEASE-ONLY  package:beta"
 assert_equals "$(sha256sum "$REGISTRY" | awk '{print $1}')" "$BEFORE" "removal dry run changes no state"
 
-ress_answer "n" -- loadout remove "$ID1"
+montage_answer "n" -- loadout remove "$ID1"
 assert_fails "cancelling removal changes nothing"
 assert_output "cancelled"
 assert_equals "$(sha256sum "$REGISTRY" | awk '{print $1}')" "$BEFORE" "cancelled removal preserves registry state"
 
 : >"$CALLS"
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_ok "first overlapping loadout is removed"
 assert_not_called "pacman -R" "shared and pre-existing resources are retained"
 
-ress loadout remove --yes "$ID2"
+mntg loadout remove --yes "$ID2"
 assert_ok "last overlapping loadout is removed"
 assert_called "pacman -R --noconfirm -- beta" "last owned shared package is deleted"
 assert_called "pacman -R --noconfirm -- gamma" "exclusive owned package is deleted"
@@ -40,10 +40,10 @@ machine_publish repo delta
 apply_yes "$P3"; ID3=$(first_loadout_id)
 grep -vxF delta "$FAKE_STATE/native.txt" >"$FAKE_STATE/native.next" && mv "$FAKE_STATE/native.next" "$FAKE_STATE/native.txt"
 : >"$CALLS"
-ress loadout remove --dry-run "$ID3"
+mntg loadout remove --dry-run "$ID3"
 assert_ok "already-absent cleanup is previewed"
 assert_output "ALREADY-ABSENT  package:delta"
-ress loadout remove --yes "$ID3"
+mntg loadout remove --yes "$ID3"
 assert_ok "already-absent resource releases its final claim"
 assert_not_called "pacman -R --noconfirm -- delta" "already-absent resource is not recreated or removed again"
 assert_equals "$(jq '.loadouts|length' "$REGISTRY")" "0" "already-absent cleanup completes tracking removal"

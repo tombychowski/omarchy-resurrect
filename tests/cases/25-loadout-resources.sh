@@ -13,7 +13,7 @@ jq -n --arg purl "$(remote_url resource-plugin)" --arg psha "$PLUGIN_SHA" \
    webapps:[{name:"Draw",url:"https://draw.example",icon:"draw"}],
    theme:{name:"resource-theme",url:$turl,commit:$tsha}}' >"$P/profile.json"
 
-ress apply --yes "$P"
+mntg apply --yes "$P"
 assert_ok "all integration resource kinds apply"
 assert_equals "$(jq '[.resources[].kind]|unique|length' "$(registry_path)")" "4" \
   "plugin, web app, installed theme, and active theme have distinct identities"
@@ -23,13 +23,13 @@ OTHER_SHA=$(seed_remote plugin other-plugin acme.resource)
 jq --arg url "$(remote_url other-plugin)" --arg sha "$OTHER_SHA" --arg name "Conflict" \
   '.name=$name | .plugins[0].url=$url | .plugins[0].commit=$sha | .webapps=[] | .theme={name:"",url:"",commit:""}' \
   "$P/profile.json" >"$P2/profile.json"
-ress apply --dry-run "$P2"
+mntg apply --dry-run "$P2"
 assert_ok "conflicting definition is previewable"
 assert_output "CONFLICT  plugin:acme.resource"
-ress apply --yes "$P2"
+mntg apply --yes "$P2"
 assert_fails "confirmed incompatible claim remains conflicting"
 CONFLICT_ID=$(jq -r '.loadouts[]|select(.name=="Conflict")|.id' "$(registry_path)")
-ress loadout check "$CONFLICT_ID" --json
+mntg loadout check "$CONFLICT_ID" --json
 assert_fails "live checking includes stored claim conflicts"
 assert_output '"claimStatus": "conflicting"'
 assert_output '"healthState": "conflicting"'
@@ -38,13 +38,13 @@ assert_output '"healthy": false'
 P3="$SANDBOX/webapp-conflict"; mkdir -p "$P3"
 jq '.name="Web Conflict" | .plugins=[] | .theme={name:"",url:"",commit:""} |
   .webapps[0].url="https://different.example"' "$P/profile.json" >"$P3/profile.json"
-ress apply --dry-run "$P3"
+mntg apply --dry-run "$P3"
 assert_ok "web app definition conflict is previewable"
 assert_output "CONFLICT  webapp:Draw"
 
 printf 'local change\n' >>"$HOME/.config/omarchy/plugins/acme.resource/manifest.json"
 ID=$(first_loadout_id)
-ress loadout check "$ID" --json
+mntg loadout check "$ID" --json
 assert_fails "changed pinned plugin makes the loadout unhealthy"
 assert_output '"currentState": "modified"'
 
@@ -55,10 +55,10 @@ P4="$SANDBOX/channel-native"; P5="$SANDBOX/channel-aur"; mkdir -p "$P4" "$P5"
 write_package_loadout "$P4" Channel-Native dual
 jq '.name="Channel-AUR" | .packages.native=[] | .packages.aur=["dual"]' "$P4/profile.json" >"$P5/profile.json"
 apply_yes "$P4"
-ress apply --dry-run "$P5"
+mntg apply --dry-run "$P5"
 assert_ok "native and AUR claims share package identity"
 assert_output "package channel differs from an existing claim"
-ress apply --yes "$P5"
+mntg apply --yes "$P5"
 assert_ok "channel disagreement does not reinstall a present package"
 assert_equals "$(jq '[.resources[]|select(.id=="package:dual")]|length' "$(registry_path)")" "1" \
   "native and AUR overlap has one canonical resource"

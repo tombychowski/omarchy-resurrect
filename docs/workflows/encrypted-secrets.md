@@ -8,14 +8,14 @@ The governing guarantees are in [Vault format](../contracts/vault-format.md) and
 
 ```bash
 sudo pacman -S age
-ress secrets init
+mntg secrets init
 ```
 
-The generated `~/.config/ress/secrets` file contains example `$HOME`-relative paths and comments. Edit it to the smallest set you need, or add one path at a time:
+The generated `~/.config/montage/secrets` file contains example `$HOME`-relative paths and comments. Edit it to the smallest set you need, or add one path at a time:
 
 ```bash
-ress secrets add .ssh/id_example
-ress secrets list
+mntg secrets add .ssh/id_example
+mntg secrets list
 ```
 
 Paths are relative to `$HOME`. The list is not copied into the vault.
@@ -23,21 +23,21 @@ Paths are relative to `$HOME`. The list is not copied into the vault.
 Enable the category:
 
 ```bash
-ress secrets enable
+mntg secrets enable
 ```
 
-Disable it later with `ress secrets disable`. `ress backup --secrets` forces the category for one run; `ress backup --no-secrets` skips it for one run.
+Disable it later with `mntg secrets disable`. `mntg backup --secrets` forces the category for one run; `mntg backup --no-secrets` skips it for one run.
 
 ## Passphrase mode
 
 Passphrase mode is the default:
 
 ```bash
-ress set SECRETS_MODE=passphrase
-ress backup
+mntg set SECRETS_MODE=passphrase
+mntg backup
 ```
 
-age prompts for the passphrase during backup and restore. ress does not store it. Without a usable terminal, the secrets step is skipped rather than falling back to plaintext or persisting a passphrase.
+age prompts for the passphrase during backup and restore. Montage does not store it. Without a usable terminal, the secrets step is skipped rather than falling back to plaintext or persisting a passphrase.
 
 Losing the passphrase makes the encrypted archive unrecoverable. Store it independently from the vault.
 
@@ -46,16 +46,16 @@ Losing the passphrase makes the encrypted archive unrecoverable. Store it indepe
 Generate an age identity and public recipient file:
 
 ```bash
-age-keygen -o ~/.config/ress/secrets.key
-age-keygen -y ~/.config/ress/secrets.key > ~/.config/ress/secrets.key.pub
-chmod 600 ~/.config/ress/secrets.key
+age-keygen -o ~/.config/montage/secrets.key
+age-keygen -y ~/.config/montage/secrets.key > ~/.config/montage/secrets.key.pub
+chmod 600 ~/.config/montage/secrets.key
 ```
 
 Configure the public-key path:
 
 ```bash
-ress set SECRETS_MODE=recipient
-ress set SECRETS_RECIPIENT=~/.config/ress/secrets.key.pub
+mntg set SECRETS_MODE=recipient
+mntg set SECRETS_RECIPIENT=~/.config/montage/secrets.key.pub
 ```
 
 Backup can now encrypt without a prompt. For this portable restore workflow, configure a path ending in `.pub`, not only a literal `age1…` recipient: restore finds the private identity by removing `.pub` from the configured path.
@@ -65,9 +65,9 @@ Move `secrets.key` to the destination through a separate secure channel. Do not 
 ## Back up and inspect
 
 ```bash
-ress backup
-ress status
-ress scan
+mntg backup
+mntg status
+mntg scan
 ```
 
 The vault should contain `secrets/secrets.tar.age`, not plaintext selected
@@ -83,10 +83,10 @@ Passphrase mode requires an interactive terminal. Recipient mode requires the pr
 Restore the whole vault or only secrets:
 
 ```bash
-ress restore --only secrets
+mntg restore --only secrets
 ```
 
-ress decrypts into a private staging directory, rejects absolute or traversing archive members, drops symlinks, then copies into `$HOME` with replacement backups. It applies `0700` to `~/.ssh` and `0600` to files below it when that directory is not a symlink.
+Montage decrypts into a private staging directory, rejects absolute or traversing archive members, drops symlinks, then copies into `$HOME` with replacement backups. It applies `0700` to `~/.ssh` and `0600` to files below it when that directory is not a symlink.
 
 ## Recovery checklist
 

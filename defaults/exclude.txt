@@ -1,6 +1,6 @@
-# ress — default exclusions, applied to every captured path.
+# Montage — default exclusions, applied to every captured path.
 #
-# rsync-style patterns. Add your own in ~/.config/ress/exclude.
+# rsync-style patterns. Add your own in ~/.config/montage/exclude.
 # The credential entries below are the reason this file exists: a dotfile
 # directory is a fine thing to sync between machines right up until it isn't.
 
@@ -39,13 +39,13 @@
 # systemd enable-state is captured declaratively, not as symlink farms
 **/*.wants/
 
-# ---- ress's own artifacts --------------------------------------------------
-# Restore keeps replaced files as *.ress-bak. Capturing them back would
-# accumulate a backup of a backup on every round trip. The older suffix stays
-# listed forever: a machine restored before the rename still has those files
-# sitting in it, and they are no more worth capturing now than they were then.
-**/*.ress-bak
-**/*.resurrect-bak
-# `ress link` recreates this symlink; capturing it copies a frozen snapshot of
+# ---- Montage's own artifacts ----------------------------------------------
+# Restore keeps replaced files as *.montage-bak. Capturing them back would
+# accumulate a backup of a backup on every round trip.
+**/*.montage-bak
+.config/montage/
+.local/state/montage/
+.local/share/montage/
+# `mntg link` recreates this symlink; capturing it copies a frozen snapshot of
 # the CLI that would then shadow the real one after a restore.
-.local/bin/ress
+.local/bin/mntg

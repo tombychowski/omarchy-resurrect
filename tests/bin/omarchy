@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test double: the parts of the omarchy CLI that ress calls.
+# Test double: the parts of the omarchy CLI that mntg calls.
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 log_call "omarchy $*"
 S=$(state)

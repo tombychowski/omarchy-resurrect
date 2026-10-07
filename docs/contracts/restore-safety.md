@@ -1,131 +1,126 @@
 # Restore safety
 
-Restore replays a validated vault onto the current Omarchy machine. Its safety model is preview first, mutate only after confirmation, separate consent for higher-power actions, preserve replaced files, and record enough progress to resume.
+Restore replays one validated immutable backup onto the current Omarchy
+machine. Its safety model is exact-snapshot selection, preview before mutation,
+general confirmation, separate higher-power consent, preservation of replaced
+files, and commit-bound resumability.
 
-The `resumable-restore`, `non-destructive-defaults`, `explicit-execution-consent`, `credential-protection`, and `schema-compatibility` OpenSpec capabilities own the observable guarantees.
+The `resumable-restore`, `non-destructive-defaults`,
+`explicit-execution-consent`, `credential-protection`,
+`schema-compatibility`, and `untrusted-artifact-reading` OpenSpec capabilities
+own the observable guarantees.
 
-## Validation before mutation
+## Exact input before mutation
 
-Before replaying categories, restore:
+Before category replay, Montage:
 
-1. validates `--only` and `--skip` category names;
-2. normalizes a supplied source and handles replacement of an existing local vault as an explicit decision;
-3. checks required local tools;
-4. requires the manifest and scalar control files to be contained regular
-   non-symlink files and validates replay directory roots;
-5. obtains the operation lock;
-6. locates and parses the canonical or supported legacy manifest; and
-7. validates the schema as a plain supported integer.
+1. validates category names and the selected repository;
+2. resolves `--backup COMMIT_OR_LABEL`—or the default `HEAD`—to one commit;
+3. reconstructs that commit from Git objects in an isolated private tree;
+4. validates its vault envelope, repository identity, machine lineage,
+   `backup.json`, payload boundaries, and contained controls;
+5. checks required local tools and takes the operation lock; and
+6. uses only that isolated tree for preview, confirmation, and replay.
 
-A typo in a category, an invalid schema, or a missing dependency stops the operation instead of silently selecting no work or failing after partial mutation.
+A moving branch cannot change the selected content after resolution. A missing
+or symlinked control, escaping link, unsupported object mode, wrong repository
+kind, changed identity, crossed lineage, or unsupported schema stops before
+machine mutation.
 
-## Preview before a live restore
+## Preview and general confirmation
 
-A live restore reports the source machine and snapshot, then describes planned work before general confirmation. The preview includes selected categories and calls out content that may execute now or persist later, including AUR packages, Omarchy hooks, autostart launchers, and enabled user services with their executable commands when discoverable.
+Dry run and live preview name the vault repository id, exact backup commit,
+source machine, creation time, selected categories, and work that may execute
+now or persist later. The latter includes AUR packages, Omarchy hooks,
+autostart launchers, remote plugin/theme code, and enabled user services.
 
-The general confirmation covers writing configuration and performing ordinary selected actions. `--yes` can supply that confirmation but does not grant the independent AUR or service decisions below.
+`--dry-run` uses the same immutable planning input but performs no category
+mutation and writes no restore progress. A dry run using `--from` works against
+temporary repository storage rather than replacing the configured vault.
 
-`--dry-run` uses the same planning paths but performs no category mutation and writes no restore progress. When used with `--from`, it clones into a temporary directory so preview does not replace or repoint the configured vault.
+A live confirmation repeats the repository and commit identity. `--yes`
+answers that general confirmation only; it does not grant AUR, service, or
+unpinned-code consent.
 
-Credentials embedded in a supplied transport URL may be used for that immediate
-clone or fetch. Prompts, errors, saved config, and the resulting Git origin use
-only the credential-free repository identity.
+## Category selection and order
 
-## Category selection
-
-The restore order is:
-
-1. packages
-2. config
-3. plugins
-4. Omarchy state
-5. web apps
-6. secrets
-
-`--only LIST` restricts work to named categories; `--skip LIST` excludes named categories. Lists are comma- or space-separated as accepted by the CLI. Unknown names fail before the category loop.
-
-The order reflects dependencies and recovery value, but a category failure does not automatically erase progress already completed by other categories.
+The restore order is packages, config, plugins, Omarchy state, web apps, then
+secrets. `--only LIST` restricts work and `--skip LIST` excludes work. Unknown
+names fail rather than silently selecting nothing. Independent later
+categories may continue after a recorded category failure when safe.
 
 ## Independent consent gates
 
 ### AUR packages
 
-AUR entries represent PKGBUILDs fetched and executed on the local machine. The user must choose to build, review, or decline them independently of file overwrite confirmation.
+AUR entries represent build instructions fetched and executed locally. The
+user must choose separately:
 
-- `--aur` authorizes the noninteractive build mode.
-- `--review-aur` runs the helper without flags that answer package review questions.
-- `--no-aur` declines this run.
-- With no explicit choice, the configured `AUR` policy is used; the default is `ask`.
+- `--aur` authorizes the noninteractive build path;
+- `--review-aur` preserves the helper's review questions; and
+- `--no-aur` defers builds.
 
-The shipped and user deny lists are applied before the choice. Declined packages are left pending rather than marked complete.
+The shipped and user deny lists apply first. General `--yes` cannot answer this
+decision.
 
 ### User services
 
-Enabled systemd user services arrange for code to run in later sessions. Restore writes captured unit files as configuration, but enabling candidates is a separate choice that shows service names and their executable commands when available.
-
-- `--enable-units` authorizes enablement for the run.
-- `--no-enable-units` leaves them disabled.
-- With no explicit choice, the configured `ENABLE_UNITS` policy is used; the default is `ask`.
-
-`ress enable-units` can inspect and enable deferred candidates later. General `--yes` does not imply either AUR or service consent.
+Captured enabled-state is evidence, not permission. Montage shows candidate
+unit names and executable commands when discoverable. `--enable-units` or
+`--no-enable-units` makes the separate choice; `mntg enable-units` can inspect
+and enable deferred candidates later.
 
 ### Unpinned remote code
 
-Plugins and Git themes normally restore only from a safe remote at a recorded commit. `--allow-unpinned` explicitly permits a branch head. On first contact with a vault, ress explains that consequence and obtains a separate confirmation before using the exception.
+Plugins and Git themes normally restore from a safe remote at a recorded
+commit. `--allow-unpinned` is an explicit exception, with a separate
+first-contact confirmation when branch-head code would be accepted.
 
 ## Non-destructive defaults
 
-Restore is additive:
+Restore is additive. It installs absent packages but does not uninstall extras,
+and it does not delete unrelated files because they are absent from a backup.
+Safe-link copying cannot redirect writes outside intended roots. A replaced
+file is retained with `.montage-bak`; newly created files receive no fabricated
+backup.
 
-- it installs only packages absent from the current package database;
-- it does not uninstall packages absent from the vault;
-- it does not delete unrelated files merely because they are absent from captured directories;
-- it copies with safe-link handling so crafted links cannot redirect writes outside the intended boundary; and
-- it retains an existing replaced file using the `.ress-bak` suffix.
+Web apps are rebuilt through validated Omarchy commands rather than installing
+captured launchers verbatim. Remote code uses the recorded commit unless the
+unpinned exception was granted.
 
-New files do not receive fabricated backups. The supported legacy `.resurrect-bak` suffix remains excluded from later capture, but new replacements use `.ress-bak`.
+## Checkpoint and resume identity
 
-Web apps are rebuilt through the Omarchy CLI from validated fields rather than installing a captured launcher verbatim. Shared code is checked out at its recorded commit by default.
+Live progress is stored in `~/.local/state/montage/restore.state`. The identity
+line contains the stable vault repository id and resolved backup commit;
+subsequent lines name completed categories. Another repository or commit
+starts a new completion set. `--restart` discards the selected backup's saved
+progress explicitly.
 
-## Checkpointing and resume
-
-Live restore progress is stored in `~/.local/state/ress/restore.state`. The first line identifies the local vault path and manifest creation timestamp; subsequent lines name completed categories.
-
-Progress belongs to one snapshot of one vault. Selecting a different vault or a newer snapshot resets the completion set, preventing stale progress from skipping new work. `--restart` explicitly discards the saved progress for the selected snapshot.
-
-A category is marked complete only when it finishes without a recorded failure and is not deliberately partial. On rerun, completed categories are skipped and remaining work is offered again.
-
-Declined AUR builds and other intentionally deferred category work are reported as “Left for later.” They are not failures, but they are not written as complete.
+A category is complete only when it finishes without a recorded failure and
+is not deliberately partial. Declined AUR builds and other deferred work stay
+available and are reported as left for later. Rerunning the same selection
+skips only completed categories.
 
 ## Explicit applied-loadout removal
 
-`ress loadout remove ID` is the narrow exception to additive apply and restore. It previews every claim as delete, release-only, retain, already-absent, protected, or decision-required and requires confirmation. A resource is automatically deleted only when all of these remain true at the final inspection:
+Vault restore remains additive. The separate `mntg loadout remove LOCAL_ID`
+workflow may remove a resource only from validated machine-local Montage claim
+and cleanup evidence. It previews release, preserve, delete, and
+decision-required outcomes; preserves shared, pre-existing, changed,
+unverifiable, critical, or dependency-protected resources; and resumes
+incomplete cleanup from the applied-loadout registry. Imported Ress claims are
+never adopted as Montage cleanup authority.
 
-- ress observed it absent before the first claim and recorded cleanup authority;
-- the selected loadout owns the last claim;
-- current kind-specific evidence still matches the represented resource; and
-- no critical-resource or dependency safeguard refuses removal.
+## Failure and verification semantics
 
-Shared and pre-existing resources only lose the selected claim. Already missing resources are released without reinstallation. Changed or unverifiable resources are preserved until an explicit `--keep-modified` or `--remove-modified` decision; keeping relinquishes cleanup authority and leaves unmanaged machine state. Application data and unrelated configuration are never inferred from a resource claim.
+Validation and confirmation failures stop before category replay. During
+replay, failures and deferred work remain distinct. Porcelain ends with
+`DONE|ok|...` when no category failed and `DONE|partial|...` otherwise.
 
-Package cleanup passes only validated direct targets to `pacman -R`. It does not request cascade, recursive dependency cleanup, `--nodeps`, or orphan deletion. Dependency refusal leaves the claim and loadout removal-pending. Any reported orphans are follow-up information only. Critical ress, privilege, package-management, and supported Omarchy runtime packages are protected even if registry provenance is forged.
+A completed restore says the chosen workflow finished under its decisions; it
+does not claim universal equivalence. `mntg verify --backup COMMIT_OR_LABEL`
+independently compares the machine with the same immutable backup and exits
+nonzero when restorable state is missing or differs.
 
-Plugin, web-app, and installed-theme cleanup is delegated to the corresponding Omarchy command after reinspection. If both IPC and the Omarchy shell process are absent, plugin removal reruns that same Omarchy remover with narrowly scoped no-live-shell responses for its enabled-state query and rescan; Omarchy still owns validation and deletion. An unresponsive live shell fails closed. A delegated nonzero status is accepted only when reinspection proves the intended resource is absent, since a later cache refresh can fail after successful deletion. Modified repositories, launchers, symlinks, mismatched remotes/commits, and ambiguous evidence fail closed. Active-theme intent is resolved before theme content: the newest remaining usable request wins, the baseline is restored after the final request, and an external theme selection is preserved.
-
-Removal records each released claim immediately. Failures remain `removal-pending`; rerunning resumes unresolved work. The loadout record disappears only after every claim/effect is terminal. An interrupted action with ambiguous post-crash evidence becomes `uncertain`, not owned or safely deleted.
-
-## Failure semantics
-
-Validation and confirmation errors stop before the category loop. During replay, category-level failures are collected so independent later work can continue when safe. The final human report distinguishes:
-
-- successful completion;
-- completion with problems, including the failed steps; and
-- deferred work left for a later decision.
-
-The porcelain terminal record is `DONE|ok|...` for a run without recorded category failures and `DONE|partial|...` when failures occurred. The command exits non-zero for the latter. A rerun against the same snapshot skips only completed categories.
-
-## Verification is separate
-
-A successful restore means the attempted workflow completed under its decisions; it is not a universal claim that the machine matches every restorable item. Run `ress verify` afterward to compare the current machine with the vault. Deferred AUR packages or services can therefore produce a successful restore with an expected verification mismatch until the user completes them.
-
-See [Back up and restore](../workflows/backup-restore.md) for commands and [Vault format](vault-format.md) for the input contract.
+See [Back up and restore](../workflows/backup-restore.md) and
+[Vault repository and backup format](vault-format.md).

@@ -1,19 +1,35 @@
 # module<TAB>allowed owners (reviewed architecture evidence; exact runtime calls
 # are conservatively checked by tests/check-structure.sh)
-lib/ress/core.sh	core
-lib/ress/safety.sh	core safety
-lib/ress/machine/packages.sh	core safety machine
-lib/ress/vault/common.sh	core safety vault-common
-lib/ress/vault/backup.sh	core safety machine vault-common vault-backup
-lib/ress/vault/restore-state.sh	core restore-state
-lib/ress/vault/restore-preview.sh	core safety machine vault-common restore-state restore-preview
-lib/ress/vault/restore.sh	core safety machine vault-common restore-state restore-preview vault-restore
-lib/ress/vault/verify.sh	core safety vault-common vault-verify
-lib/ress/vault/commands.sh	core safety vault-common registry vault-commands
-lib/ress/loadout/registry.sh	core safety profile registry
-lib/ress/loadout/profile.sh	core safety profile
-lib/ress/loadout/resources.sh	core safety machine profile registry resources
-lib/ress/loadout/planning.sh	core machine profile registry resources planning
-lib/ress/loadout/share.sh	core safety machine profile registry resources share
-lib/ress/loadout/lifecycle.sh	core safety machine profile registry resources planning lifecycle
-lib/ress/loadout/apply.sh	core safety machine profile registry resources planning lifecycle apply
+lib/montage/core.sh	core
+lib/montage/safety.sh	core safety
+lib/montage/repository/common.sh	core safety repository-common
+lib/montage/repository/registry.sh	core safety repository-common repository-registry
+lib/montage/repository/transaction.sh	core safety repository-common repository-transaction
+lib/montage/repository/reader.sh	core safety repository-common repository-reader
+lib/montage/repository/sync.sh	core safety repository-common repository-sync
+lib/montage/repository/commands.sh	core safety repository-common repository-registry repository-sync repository-commands
+lib/montage/machine/packages.sh	core safety machine
+lib/montage/vault/common.sh	core safety vault-common
+lib/montage/vault/history.sh	core safety repository-common repository-reader vault-common vault-history
+lib/montage/vault/backup.sh	core safety machine vault-common vault-backup
+lib/montage/vault/restore-state.sh	core restore-state
+lib/montage/vault/restore-preview.sh	core safety machine vault-common restore-state restore-preview
+lib/montage/vault/restore.sh	core safety machine vault-common restore-state restore-preview vault-restore
+lib/montage/vault/verify.sh	core safety vault-common vault-verify
+lib/montage/vault/commands.sh	core safety vault-common registry vault-commands
+lib/montage/loadout/registry.sh	core safety profile registry
+lib/montage/loadout/profile.sh	core safety profile
+lib/montage/loadout/repository.sh	core safety repository-common repository-registry repository-transaction repository-reader registry profile loadout-repository
+lib/montage/loadout/resources.sh	core safety machine profile registry resources
+lib/montage/loadout/planning.sh	core machine profile registry resources planning
+lib/montage/loadout/share.sh	core safety machine profile registry resources share
+lib/montage/loadout/lifecycle.sh	core safety machine profile registry resources planning lifecycle
+lib/montage/loadout/apply.sh	core safety machine profile registry resources planning lifecycle apply
+lib/montage/port/common.sh	core safety repository-reader port-common
+lib/montage/port/adapter.sh	port-adapter
+lib/montage/port/inspect.sh	core repository-reader port-common port-adapter port-inspect
+lib/montage/port/import.sh	core repository-common repository-reader repository-transaction loadout-repository vault-common port-common port-adapter port-inspect port-import
+lib/montage/port/export.sh	core repository-reader loadout-repository vault-common port-common port-adapter port-export
+lib/montage/port/adapters/ress_v1/format.sh	core safety repository-common port-adapter port-ress-v1-format
+lib/montage/port/adapters/ress_v1/translate.sh	core safety vault-common port-ress-v1-format port-ress-v1-translate
+lib/montage/port/commands.sh	core port-adapter port-inspect port-import port-export port-commands

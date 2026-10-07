@@ -1,142 +1,172 @@
 # Back up and restore
 
-This workflow captures a working Omarchy machine into a private Git vault, previews it on another machine, restores selected state, and verifies the result.
+This workflow captures one Omarchy machine lineage into a private Montage
+vault, inspects immutable backups, previews one exact snapshot, restores it,
+and verifies the result. Read [Vault format](../contracts/vault-format.md) for
+the repository contract and [Restore safety](../contracts/restore-safety.md)
+for consent and preservation rules.
 
-The exact vault layout is defined in [Vault format](../contracts/vault-format.md). Consent, checkpointing, and preservation rules are defined in [Restore safety](../contracts/restore-safety.md).
-
-## Prepare the source machine
-
-Check that expected tools and configuration are available:
+## Initialize the private vault
 
 ```bash
-ress doctor
-ress status
+mntg doctor
+mntg init
+mntg status
 ```
 
-Create the default local vault, optionally with a private remote:
+Initialization creates a Git repository with stable vault and machine-lineage
+ids in `montage.json`. It does not pretend an empty repository is a backup.
+Keep a vault remote private: configuration, package inventory, host evidence,
+and encrypted-secret ciphertext are personal data.
+
+The ordinary categories default on except secrets. Review or change settings
+through the CLI:
 
 ```bash
-ress init
-# or
-ress init --remote https://github.com/you/private-omarchy-vault.git
+mntg set CAPTURE_AUTOSTART=1
+mntg set SECRET_SCAN=block
 ```
 
-If an immediate HTTPS operation is supplied a credential-bearing URL, ress uses
-it only for that transport. Config, status, vault Git origins, warnings, and
-generated instructions retain only the credential-free repository identity.
-Prefer Git credential helpers or SSH rather than embedding credentials.
+Autostart capture is explicit because those launchers run at login. Blocking
+scan mode refuses a candidate containing credential-shaped plaintext.
 
-Review capture choices in `ress status` or `~/.config/ress/config`. The ordinary categories default on except secrets. Change a supported setting with `ress set`, for example:
+## Capture a backup commit
 
 ```bash
-ress set CAPTURE_AUTOSTART=1
-ress set SECRET_SCAN=block
+mntg backup -m "Before replacing this machine"
 ```
 
-Autostart capture is an explicit choice because those launchers run at login. Blocking scan mode refuses a commit when captured plaintext resembles a credential.
+Montage stages and validates the complete snapshot before publishing it. A
+failed capture or blocking credential scan leaves the current snapshot and Git
+history unchanged. An unchanged capture reports the existing commit instead
+of adding timestamp-only history.
 
-## Capture
-
-Run a local backup:
+Inspect the immutable results:
 
 ```bash
-ress backup -m "Before replacing this machine"
+mntg backup list
+mntg backup list --json
+mntg backup show 0123456789abcdef0123456789abcdef01234567
 ```
 
-Push in the same operation when a remote is configured:
+Each list or show operation reconstructs and validates the named commit without
+changing the vault checkout. Resolve warnings about omissions, unsafe links,
+local-only code, unsupported launchers, or credential-bearing URLs on the
+source machine.
+
+## Give an important backup a label
+
+Use a bounded lowercase label as a stable human selector:
 
 ```bash
-ress backup --push
+mntg backup label before-reinstall 0123456789abcdef0123456789abcdef01234567
+mntg backup show before-reinstall
 ```
 
-Afterward, inspect the summary and scan independently:
+Labels are unique. A labeled backup is protected from retention until the
+label is explicitly removed:
 
 ```bash
-ress status
-ress scan
+mntg backup unlabel before-reinstall
 ```
 
-Read warnings about unlisted configuration, unsafe symlinks, local-only
-plugins/themes, unsupported launchers, and credential-bearing web-app URLs on
-the source machine; it is the machine best able to resolve those omissions.
+## Preview one exact backup
 
-## Preview on the destination
-
-On a fresh Omarchy installation, install the plugin using Omarchy's plugin flow, then preview without changing the configured local vault or machine:
+Select the commit or Montage-managed label explicitly:
 
 ```bash
-~/.config/omarchy/plugins/tsouth89.resurrect/bin/ress \
-  restore --from https://github.com/you/private-omarchy-vault.git --dry-run
-```
-
-The preview names selected category work and content that can execute or persist. A private remote may require credentials supplied through Git's normal mechanisms.
-
-Preview only selected categories when useful:
-
-```bash
-ress restore --from https://github.com/you/private-omarchy-vault.git \
+mntg restore --backup before-reinstall --dry-run
+mntg restore --backup 0123456789abcdef0123456789abcdef01234567 \
   --only packages,config --dry-run
 ```
 
-Supported categories are `packages`, `config`, `omarchy`, `webapps`, `plugins`, and `secrets`. A typo is rejected before mutation.
+The preview prints the vault repository id and resolved commit. That isolated
+commit remains the source even if a branch moves afterward. Supported
+categories are `packages`, `config`, `omarchy`, `webapps`, `plugins`, and
+`secrets`; an unknown category fails before mutation.
 
-## Restore
-
-Start the live interactive restore:
+For first contact with a private remote, preview in temporary storage:
 
 ```bash
-ress restore --from https://github.com/you/private-omarchy-vault.git
+mntg restore --from https://github.com/you/private-montage-vault.git \
+  --backup 0123456789abcdef0123456789abcdef01234567 --dry-run
 ```
 
-The general confirmation permits ordinary selected writes. AUR builds and user-service enablement remain separate choices. For a deliberately unattended run, make all three decisions explicit:
+Use the exact commit currently published by the remote. Git credentials should
+come from an SSH agent or credential helper, not an embedded URL.
+
+## Restore and resume
 
 ```bash
-ress restore --from https://github.com/you/private-omarchy-vault.git \
+mntg restore --backup before-reinstall
+```
+
+The confirmation names the same vault id and resolved commit shown in preview.
+General `--yes` does not grant AUR-build or service-enablement consent. For an
+unattended run, make all decisions explicit:
+
+```bash
+mntg restore --backup before-reinstall \
   --yes --aur --enable-units
 ```
 
-To decline the higher-power actions explicitly:
+Or explicitly defer the higher-power actions:
 
 ```bash
-ress restore --from https://github.com/you/private-omarchy-vault.git \
+mntg restore --backup before-reinstall \
   --yes --no-aur --no-enable-units
 ```
 
-Use `--review-aur` instead of `--aur` when the AUR helper should retain its own package-review questions.
+If a live restore stops or remains partial, rerun the same command with the
+same label or commit. Progress is keyed by repository id plus resolved commit;
+another vault or backup never inherits completed categories. Use `--restart`
+to discard progress deliberately.
 
-Restore is resumable. If it stops or reports a partial result, rerun the same command against the same vault snapshot. Completed categories are skipped; failed or deferred work remains available.
-
-Use `--skip LIST` or `--only LIST` for focused recovery. Deferred services can be reviewed later:
-
-```bash
-ress enable-units --list
-ress enable-units syncthing.service
-# or, after reviewing all candidates
-ress enable-units --all
-```
-
-## Verify
-
-After restore and any deliberate deferred work:
+Deferred services remain separately inspectable:
 
 ```bash
-ress verify
+mntg enable-units --list
+mntg enable-units syncthing.service
 ```
 
-Verification exits non-zero when restorable vault entries are missing or differ, so it can close a provisioning script:
+## Verify the same immutable backup
 
 ```bash
-ress restore --from https://github.com/you/private-omarchy-vault.git \
-  --yes --aur --enable-units
-ress verify || exit 1
+mntg verify --backup before-reinstall
+mntg verify --backup before-reinstall --json
 ```
 
-`ress verify --json` provides structured category counts and item arrays for automation. Non-restorable inventory is reported separately from missing work.
+Verification reports the repository id and exact commit and exits nonzero when
+restorable entries are missing or differ. Use the same selector as restore so
+the comparison cannot silently move to a newer backup.
+
+## Preview local retention
+
+Always preview before shortening local branch history:
+
+```bash
+mntg backup retain --keep 10 --dry-run
+```
+
+The plan names every affected backup. Labels on removable backups block the
+operation. A live run repeats the plan and requires confirmation:
+
+```bash
+mntg backup retain --keep 10
+```
+
+Retention reconstructs the retained linear chain, so equivalent retained
+snapshots may receive new commit ids and retained labels are remapped. If the
+old history was published, Montage reports that local history now diverges
+from the remote. It will not force-push or silently erase the remote history;
+keep the remote history, choose a new private remote, or perform deliberate
+external Git administration.
 
 ## If something remains
 
-- Rerun restore to continue the same snapshot.
-- Use `ress restore --only <category>` to focus on a failed or deferred category.
-- Use `ress enable-units` for services deliberately left disabled.
-- Resolve capture omissions on the source machine and create a new backup.
-- Follow [Fresh-machine validation](../testing/fresh-machine-validation.md) before a release or a destructive machine replacement.
+- Rerun restore with the same exact commit or label to continue.
+- Use `--only <category>` for failed or deferred work.
+- Use `mntg enable-units` for services deliberately left disabled.
+- Fix capture omissions on the source machine and create a new backup commit.
+- Follow [Fresh-machine validation](../testing/fresh-machine-validation.md)
+  before a release or destructive machine replacement.

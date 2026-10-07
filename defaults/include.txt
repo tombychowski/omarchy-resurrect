@@ -1,8 +1,8 @@
-# ress — default capture list.
+# Montage — default capture list.
 #
 # One path per line, relative to $HOME. Directories are captured recursively.
-# Add your own in ~/.config/ress/include (same format); remove
-# things with ~/.config/ress/exclude (glob patterns).
+# Add your own in ~/.config/montage/include (same format); remove
+# things with ~/.config/montage/exclude (glob patterns).
 #
 # Everything here is plain configuration. Credentials, tokens and keys are
 # deliberately absent — those only travel through the encrypted `secrets`
@@ -54,7 +54,7 @@
 .config/systemd/user
 # .config/autostart is deliberately not here: every entry in it is a command
 # that runs the next time you log in, on whatever machine the vault is replayed
-# onto. Turn it on with `ress set CAPTURE_AUTOSTART=1` — the capture then says
+# onto. Turn it on with `mntg set CAPTURE_AUTOSTART=1` — the capture then says
 # how many entries came with it, and a restore counts them among the things the
 # vault will run.
 

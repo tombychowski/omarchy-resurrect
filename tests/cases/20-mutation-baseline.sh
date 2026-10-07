@@ -11,7 +11,7 @@
 # so under the runner it skips itself rather than recursively testing the
 # baseline gate while that gate is already being established.
 
-if [[ -n ${RESS_MUTATION_RUN:-} ]]; then
+if [[ -n ${MONTAGE_MUTATION_RUN:-} ]]; then
   echo "  (skipped: this case runs the mutation runner, and the runner is running)"
   return 0
 fi
@@ -22,11 +22,11 @@ fi
 # baseline check leaves the run in. The self-test-only baseline filter keeps this
 # unit case focused; a real sweep is forbidden from using it.
 
-OUT=$(cd "$REPO_DIR" && RESS_MUTATION_BASELINE_FILTER=11-empty ./tests/mutate.sh no-such-mutation 2>&1); STATUS=$?
+OUT=$(cd "$REPO_DIR" && MONTAGE_MUTATION_BASELINE_FILTER=11-empty ./tests/mutate.sh no-such-mutation 2>&1); STATUS=$?
 assert_ok "the runner starts when the suite passes"
 assert_output "cases passed" "and says so before it begins"
 
-OUT=$(cd "$REPO_DIR" && RESS_MUTATION_BASELINE_FILTER=11-empty ./tests/mutate.sh aur 2>&1); STATUS=$?
+OUT=$(cd "$REPO_DIR" && MONTAGE_MUTATION_BASELINE_FILTER=11-empty ./tests/mutate.sh aur 2>&1); STATUS=$?
 assert_fails "a real mutation run cannot narrow its clean baseline"
 assert_output "only valid with the no-such-mutation self-test filter" "and explains the protected test hook"
 
@@ -48,7 +48,7 @@ rsync -a --exclude '.git/' "$REPO_DIR/" "$COPY/"
 printf '\nassert_equals "1" "2" "a case that fails on purpose"\n' >>"$COPY/tests/cases/11-empty.sh"
 
 COPY_PATH="${PATH//"$TESTS_DIR/bin":/}"
-OUT=$(cd "$COPY" && PATH="$COPY_PATH" RESS_MUTATION_BASELINE_FILTER=11-empty ./tests/mutate.sh no-such-mutation 2>&1); STATUS=$?
+OUT=$(cd "$COPY" && PATH="$COPY_PATH" MONTAGE_MUTATION_BASELINE_FILTER=11-empty ./tests/mutate.sh no-such-mutation 2>&1); STATUS=$?
 assert_fails "the runner refuses to run against a suite that is already red"
 assert_output "does not pass on its own" "and says why"
 assert_output "11-empty" "and names the case that is red"

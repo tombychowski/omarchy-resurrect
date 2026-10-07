@@ -15,14 +15,14 @@ REGISTRY=$(registry_path)
 assert_equals "$(jq '[.claims[]|select(.resourceId=="package:alpha")]|length' "$REGISTRY")" "2" "pre-existing package is shared"
 assert_equals "$(jq -r '.resources[]|select(.id=="package:alpha")|.cleanupPolicy' "$REGISTRY")" "retain" \
   "first observation protects pre-existing package"
-assert_equals "$(jq '[.claims[]|select(.resourceId=="package:beta")]|length' "$REGISTRY")" "2" "ress-introduced package is shared"
+assert_equals "$(jq '[.claims[]|select(.resourceId=="package:beta")]|length' "$REGISTRY")" "2" "mntg-introduced package is shared"
 assert_equals "$(jq -r '.resources[]|select(.id=="package:beta")|.cleanupPolicy' "$REGISTRY")" "remove" \
   "later claim does not change original cleanup authority"
 
 ID1=$(jq -r '.loadouts[]|select(.name=="First")|.id' "$REGISTRY")
-ress loadout remove --yes "$ID1"
+mntg loadout remove --yes "$ID1"
 assert_ok "removing one claimant releases shared claims"
-grep -qxF beta "$FAKE_STATE/native.txt" && _pass || _fail "shared ress package remains installed"
+grep -qxF beta "$FAKE_STATE/native.txt" && _pass || _fail "shared mntg package remains installed"
 grep -qxF alpha "$FAKE_STATE/native.txt" && _pass || _fail "protected pre-existing package remains installed"
 
 # Equivalent pinned integrations share one canonical resource and do not clone

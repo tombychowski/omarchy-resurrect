@@ -7,13 +7,13 @@ apply_yes "$P"
 ID=$(first_loadout_id)
 
 printf 'alpha\t9.9-2\n' >"$FAKE_STATE/package-versions.tsv"
-ress loadout check "$ID" --json
+mntg loadout check "$ID" --json
 assert_ok "package version changes remain healthy under name-based claims"
 assert_output '"currentState": "present"'
 
 grep -vxF alpha "$FAKE_STATE/native.txt" >"$FAKE_STATE/native.next" && mv "$FAKE_STATE/native.next" "$FAKE_STATE/native.txt" || : >"$FAKE_STATE/native.txt"
 : >"$CALLS"
-ress loadout check "$ID" --json
+mntg loadout check "$ID" --json
 assert_fails "external package removal is detected"
 assert_output '"currentState": "missing"'
 assert_output '"healthState": "missing"'
@@ -30,16 +30,16 @@ apply_yes "$P2"
 PLUGIN_ID=$(jq -r '.loadouts[]|select(.name=="Unverifiable")|.id' "$(registry_path)")
 mv "$HOME/.config/omarchy/plugins/acme.unverifiable" "$SANDBOX/unverifiable-plugin"
 ln -s "$SANDBOX/unverifiable-plugin" "$HOME/.config/omarchy/plugins/acme.unverifiable"
-ress loadout check "$PLUGIN_ID" --json
+mntg loadout check "$PLUGIN_ID" --json
 assert_fails "symlinked tracked resource is unverifiable"
 assert_output '"currentState": "unverifiable"'
 assert_output '"healthState": "unverifiable"'
 
-ress status --json
+mntg status --json
 assert_ok "backup status survives loadout state"
 assert_output '"loadouts"'
 
 printf '{bad json\n' >"$(registry_path)"
-ress status --json
+mntg status --json
 assert_ok "malformed optional registry does not erase backup status"
 assert_output '"available": false'

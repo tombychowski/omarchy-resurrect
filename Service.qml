@@ -22,19 +22,19 @@ Item {
   property string omarchyPath: Quickshell.env("OMARCHY_PATH")
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property string configPath: home + "/.config/ress/config"
-  readonly property string stampPath: home + "/.local/state/ress/last-backup"
-  readonly property string attemptPath: home + "/.local/state/ress/last-attempt"
-  readonly property string runningPath: home + "/.local/state/ress/running"
+  readonly property string configPath: home + "/.config/montage/config"
+  readonly property string stampPath: home + "/.local/state/montage/last-backup"
+  readonly property string attemptPath: home + "/.local/state/montage/last-attempt"
+  readonly property string runningPath: home + "/.local/state/montage/running"
   // decodeURIComponent because a $HOME containing a space arrives percent-encoded
   // in a file: URL, and every subsequent Process would fail on the literal %20.
-  readonly property string cli: decodeURIComponent(Qt.resolvedUrl("bin/ress").toString().replace(/^file:\/\//, ""))
+  readonly property string cli: decodeURIComponent(Qt.resolvedUrl("bin/mntg").toString().replace(/^file:\/\//, ""))
 
   // ------------------------------------------------------------------ state
   property var config: ({})
   property int lastBackup: 0
   property int lastAttempt: 0
-  // Another ress process (typically the headless scheduler) holds the lock.
+  // Another Montage process (typically the headless scheduler) holds the lock.
   property bool externallyBusy: false
   property int now: Math.floor(Date.now() / 1000)
   property var status: null
@@ -47,6 +47,23 @@ Item {
   property var shareCatalog: null
   property bool shareCatalogAvailable: false
   property bool loadingShareCatalog: false
+  property var repositories: null
+  property bool repositoriesAvailable: false
+  property bool loadingRepositories: false
+  property string selectedRepositoryName: ""
+  property string selectedRepositoryId: ""
+  property string selectedRepositoryType: ""
+  property string selectedRepositoryPath: ""
+  property string selectedRepositoryLoadoutId: ""
+  property var repositoryLoadouts: null
+  property var backupHistory: null
+  property bool loadingRepositoryContent: false
+  property var syncPreview: null
+  property bool loadingSyncPreview: false
+  property var portPreview: null
+  property bool loadingPortPreview: false
+  property var retentionPreview: null
+  property bool loadingRetentionPreview: false
 
   property bool busy: false
   readonly property bool anyBusy: busy || externallyBusy
@@ -69,7 +86,7 @@ Item {
   // minute at a time for a visible "4m ago", and far more slowly otherwise —
   // nothing on the bar changes faster than the stale threshold.
   property bool uiActive: false
-  readonly property string vault: setting("VAULT", home + "/.local/share/ress/vault")
+  readonly property string vault: setting("VAULT", home + "/.local/share/montage/vault")
   readonly property string remote: setting("REMOTE", "")
   readonly property bool autoBackup: setting("AUTO_BACKUP", "off") === "on"
   // The two things a restore will not do without being asked. Three states
@@ -86,7 +103,7 @@ Item {
   }
 
   // The CLI's own defaults, for a machine that has never written a config file.
-  // Falling back to "off" drew all six toggles off while `ress backup` would in
+  // Falling back to "off" drew all six toggles off while `mntg backup` would in
   // fact capture five of them — the panel disagreeing with the engine about
   // what the next backup does.
   readonly property var categoryDefaults: ({
@@ -181,22 +198,39 @@ Item {
     return true
   }
 
-  function backupNow()  { return run(["backup"], "backup") }
+  function backupNow()  {
+    var args = selectedRepositoryType === "vault" && selectedRepositoryPath !== ""
+      ? ["--vault", selectedRepositoryPath, "backup"] : ["backup"]
+    return run(args, "backup")
+  }
   function shareNow()   { return run(["share"], "share") }
 
   // Called by the panel only when Share becomes the active workflow. The
   // service does not prefetch this potentially large machine inventory for
   // the headless scheduler or for the other tabs.
-  function refreshShareCatalog() {
-    if (shareCatalogProc.running) return false
+  function refreshShareCatalog(repositoryName, loadoutId) {
+    var repo = String(repositoryName || selectedRepositoryName)
+    var item = String(loadoutId || selectedRepositoryLoadoutId)
+    if (shareCatalogProc.running || repo === "" || item === "") {
+      shareCatalog = null
+      shareCatalogAvailable = false
+      loadingShareCatalog = false
+      return false
+    }
     loadingShareCatalog = true
+    shareCatalogProc.command = [cli, "share", "catalog", "--repository", repo,
+                                "--loadout", item, "--json"]
     shareCatalogProc.running = true
     return true
   }
 
-  function shareCustom(name, description, ids, acknowledgements) {
+  function shareCustom(repositoryName, loadoutId, name, description, ids, acknowledgements) {
+    var repo = String(repositoryName || selectedRepositoryName)
+    var item = String(loadoutId || selectedRepositoryLoadoutId)
+    if (repo === "" || item === "") return false
     var selected = (ids || []).slice().sort()
-    var args = ["share", "--custom", "--name", String(name || ""),
+    var args = ["share", "--repository", repo, "--loadout", item,
+                "--custom", "--name", String(name || ""),
                 "--description", String(description || "")]
     for (var i = 0; i < selected.length; i++)
       args = args.concat(["--select", selected[i]])
@@ -213,6 +247,87 @@ Item {
   function refresh() {
     if (!statusProc.running) { loadingStatus = true; statusProc.running = true }
     refreshLoadouts()
+    refreshRepositories()
+  }
+
+  function refreshRepositories() {
+    if (repositoryListProc.running) return false
+    loadingRepositories = true
+    repositoryListProc.running = true
+    return true
+  }
+
+  function clearRepositoryContent() {
+    repositoryLoadouts = null
+    backupHistory = null
+    selectedRepositoryLoadoutId = ""
+    shareCatalog = null
+    shareCatalogAvailable = false
+  }
+
+  function selectRepository(name, type, path, repositoryId) {
+    selectedRepositoryName = String(name || "")
+    selectedRepositoryType = String(type || "")
+    selectedRepositoryPath = String(path || "")
+    selectedRepositoryId = String(repositoryId || "")
+    clearRepositoryContent()
+    return refreshRepositoryContent()
+  }
+
+  function refreshRepositoryContent() {
+    if (loadingRepositoryContent || selectedRepositoryName === "") return false
+    loadingRepositoryContent = true
+    if (selectedRepositoryType === "loadouts") {
+      repositoryLoadoutProc.command = [cli, "repository", "loadouts", selectedRepositoryName, "--json"]
+      repositoryLoadoutProc.running = true
+      return true
+    }
+    if (selectedRepositoryType === "vault" && selectedRepositoryPath !== "") {
+      backupHistoryProc.command = [cli, "--vault", selectedRepositoryPath, "backup", "list", "--json"]
+      backupHistoryProc.running = true
+      return true
+    }
+    loadingRepositoryContent = false
+    return false
+  }
+
+  function selectRepositoryLoadout(id) {
+    selectedRepositoryLoadoutId = String(id || "")
+    shareCatalog = null
+    shareCatalogAvailable = false
+    return selectedRepositoryLoadoutId !== "" ? refreshShareCatalog() : false
+  }
+
+  function previewSync(repositoryName) {
+    var name = String(repositoryName || selectedRepositoryName)
+    if (syncPreviewProc.running || name === "") return false
+    syncPreview = null
+    loadingSyncPreview = true
+    syncPreviewProc.command = [cli, "repository", "sync", name, "--json"]
+    syncPreviewProc.running = true
+    return true
+  }
+
+  function previewPort(source, destination, includeHistory) {
+    if (portPreviewProc.running || String(source || "") === "" || String(destination || "") === "") return false
+    portPreview = null
+    loadingPortPreview = true
+    var args = [cli, "port", "ress", "plan", String(source), "--destination", String(destination), "--json"]
+    if (includeHistory) args.splice(args.length - 1, 0, "--history")
+    portPreviewProc.command = args
+    portPreviewProc.running = true
+    return true
+  }
+
+  function previewRetention(vaultPath, keep) {
+    var count = Number(keep)
+    if (retentionPreviewProc.running || vaultPath === "" || count < 1 || count > 9999) return false
+    retentionPreview = null
+    loadingRetentionPreview = true
+    retentionPreviewProc.command = [cli, "--vault", vaultPath, "--dry-run",
+      "backup", "retain", "--keep", String(count), "--json"]
+    retentionPreviewProc.running = true
+    return true
   }
 
   function refreshLoadouts() {
@@ -242,6 +357,18 @@ Item {
     return ["omarchy-launch-terminal", cli, "apply"].concat(dryRun ? ["--dry-run"] : []).concat(["--", source])
   }
 
+  function repositoryApplyTerminalArgs(repositoryPath, loadoutId, dryRun) {
+    var args = ["omarchy-launch-terminal", cli, "apply", repositoryPath,
+                "--loadout", loadoutId]
+    if (dryRun) args.splice(3, 0, "--dry-run")
+    return args
+  }
+
+  function restoreTerminalArgs(vaultPath, commit) {
+    return ["omarchy-launch-terminal", cli, "--vault", vaultPath,
+            "restore", "--backup", commit]
+  }
+
   function loadoutTerminalArgs(action, id, source) {
     var args = ["omarchy-launch-terminal", cli, "loadout", action, id]
     if (action === "update" && source) args = args.concat(["--", source])
@@ -249,13 +376,53 @@ Item {
   }
 
   function openApply(source, dryRun) { Quickshell.execDetached(applyTerminalArgs(source, dryRun)) }
+  function openRepositoryApply(repositoryPath, loadoutId, dryRun) {
+    Quickshell.execDetached(repositoryApplyTerminalArgs(repositoryPath, loadoutId, dryRun))
+  }
+  function openRestore(vaultPath, commit) {
+    Quickshell.execDetached(restoreTerminalArgs(vaultPath, commit))
+  }
+  function repositoryConfigureTerminalArgs(name, path, type, remote, replace) {
+    var cleanRemote = Model.stripCredentials(remote)
+    var args = ["omarchy-launch-terminal", cli, "repository", "configure",
+                name, path, type]
+    if (cleanRemote !== "") args = args.concat(["--remote", cleanRemote])
+    if (replace) args.push("--replace")
+    return args
+  }
+  function openRepositoryConfigure(name, path, type, remote, replace) {
+    if (Model.isRessLocation(path)) return false
+    Quickshell.execDetached(repositoryConfigureTerminalArgs(name, path, type, remote, replace))
+    return true
+  }
+  function openRetention(vaultPath, keep) {
+    Quickshell.execDetached(["omarchy-launch-terminal", cli, "--vault", vaultPath,
+      "backup", "retain", "--keep", String(keep)])
+  }
+  function openSync(repositoryName, action) {
+    var args = ["omarchy-launch-terminal", cli, "repository", "sync", repositoryName]
+    if (action === "pull" || action === "push") args.push("--" + action)
+    Quickshell.execDetached(args)
+  }
+  function openPortImport(report, repositoryName, loadoutId) {
+    if (!report || !report.compatible) return false
+    var args = ["omarchy-launch-terminal", cli, "port", "ress", "import", report.artifactType,
+                report.source]
+    if (report.artifactType === "vault") {
+      args = args.concat(["--destination", report.destination])
+    } else if (report.artifactType === "loadout" && repositoryName !== "" && loadoutId !== "") {
+      args = args.concat(["--repository", repositoryName, "--loadout", loadoutId])
+    } else return false
+    Quickshell.execDetached(args)
+    return true
+  }
   function openLoadoutAction(action, id, source) {
     Quickshell.execDetached(loadoutTerminalArgs(action, id, source || ""))
   }
 
   // execDetached rather than a shared Process: assigning `command` to a Process
   // that is still running drops the write, so a second quick toggle vanished.
-  // Two of these landing at once is safe because `ress set` takes a lock on the
+  // Two of these landing at once is safe because `mntg set` takes a lock on the
   // config file and re-reads it inside that lock — it is not the vault lock,
   // which would make the bar show a backup running for a settings change.
   function setCategory(key, on) {
@@ -312,7 +479,7 @@ Item {
   Process {
     id: shareCatalogProc
     running: false
-    command: [root.cli, "share", "catalog", "--json"]
+    command: []
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -333,6 +500,120 @@ Item {
         root.shareCatalog = null
         root.shareCatalogAvailable = false
       }
+    }
+  }
+
+  Process {
+    id: repositoryListProc
+    running: false
+    command: [root.cli, "repository", "list", "--json"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.loadingRepositories = false
+        try {
+          var parsed = Model.parseRepositoryList(JSON.parse(text || "{}"))
+          root.repositories = parsed
+          root.repositoriesAvailable = parsed !== null
+        } catch (e) {
+          root.repositories = null
+          root.repositoriesAvailable = false
+        }
+      }
+    }
+    onExited: function(exitCode) {
+      root.loadingRepositories = false
+      if (exitCode !== 0) { root.repositories = null; root.repositoriesAvailable = false }
+    }
+  }
+
+  Process {
+    id: repositoryLoadoutProc
+    running: false
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.loadingRepositoryContent = false
+        try { root.repositoryLoadouts = Model.parseLoadoutCatalog(JSON.parse(text || "{}")) }
+        catch (e) { root.repositoryLoadouts = null }
+      }
+    }
+    onExited: function(exitCode) {
+      root.loadingRepositoryContent = false
+      if (exitCode !== 0) root.repositoryLoadouts = null
+    }
+  }
+
+  Process {
+    id: backupHistoryProc
+    running: false
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.loadingRepositoryContent = false
+        try { root.backupHistory = Model.parseBackupList(JSON.parse(text || "{}")) }
+        catch (e) { root.backupHistory = null }
+      }
+    }
+    onExited: function(exitCode) {
+      root.loadingRepositoryContent = false
+      if (exitCode !== 0) root.backupHistory = null
+    }
+  }
+
+  Process {
+    id: syncPreviewProc
+    running: false
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.loadingSyncPreview = false
+        try { root.syncPreview = Model.parseSyncResult(JSON.parse(text || "{}")) }
+        catch (e) { root.syncPreview = null }
+      }
+    }
+    onExited: function(exitCode) {
+      root.loadingSyncPreview = false
+      if (exitCode !== 0 && root.syncPreview === null) root.lastError = "Repository sync preview is unavailable"
+    }
+  }
+
+  Process {
+    id: portPreviewProc
+    running: false
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.loadingPortPreview = false
+        try { root.portPreview = Model.parsePortReport(JSON.parse(text || "{}")) }
+        catch (e) { root.portPreview = null }
+      }
+    }
+    onExited: function(exitCode) {
+      root.loadingPortPreview = false
+      if (exitCode !== 0 && root.portPreview === null) root.lastError = "Ress port preview is unavailable"
+    }
+  }
+
+  Process {
+    id: retentionPreviewProc
+    running: false
+    command: []
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.loadingRetentionPreview = false
+        try { root.retentionPreview = Model.parseRetentionResult(JSON.parse(text || "{}")) }
+        catch (e) { root.retentionPreview = null }
+      }
+    }
+    onExited: function(exitCode) {
+      root.loadingRetentionPreview = false
+      if (exitCode !== 0 && root.retentionPreview === null) root.lastError = "Retention preview is unavailable"
     }
   }
 

@@ -1,21 +1,27 @@
-# The config file is meant to be edited by hand, and `ress status --json` is
+# The config file is meant to be edited by hand, and `mntg status --json` is
 # what the panel reads. A value the script does not expect was handed to
 # `jq --argjson` as it was, so `INCLUDE_OMARCHY=` or `AUTO_INTERVAL_HOURS=24h`
 # made the command exit 2 with no output at all: no summary in the panel, and
 # nothing anywhere saying why.
 
 seed_machine
-ress init >/dev/null
-ress backup -m status >/dev/null
+
+# Ress state may coexist but must not influence Montage status. Deliberately
+# contradictory values below would make these assertions fail if read.
+mkdir -p "$HOME/.config/ress" "$HOME/.local/state/ress"
+printf 'AUTO_INTERVAL_HOURS=999\nINCLUDE_PACKAGES=0\n' >"$HOME/.config/ress/config"
+printf '9999999999\n' >"$HOME/.local/state/ress/last-backup"
+mntg init >/dev/null
+mntg backup -m status >/dev/null
 assert_ok "a vault to report on"
 
-status_json() { ress status --json; }
+status_json() { mntg status --json; }
 
 # ---- 1. a value the script does not expect --------------------------------
 
-mkdir -p "$HOME/.config/ress"
+mkdir -p "$HOME/.config/montage"
 printf 'INCLUDE_OMARCHY=\nAUTO_INTERVAL_HOURS=24h\nINCLUDE_PACKAGES=yes\n' \
-  >"$HOME/.config/ress/config"
+  >"$HOME/.config/montage/config"
 
 status_json
 assert_ok "status --json survives a hand-edited config"
@@ -30,8 +36,8 @@ assert_equals "$(jq -r '.categories.config' <<<"$OUT")" "true" "one that is not 
 
 # ---- 2. a stamp that is not a number --------------------------------------
 
-printf 'INCLUDE_PACKAGES=1\n' >"$HOME/.config/ress/config"
-printf 'not-a-number\n' >"$HOME/.local/state/ress/last-backup"
+printf 'INCLUDE_PACKAGES=1\n' >"$HOME/.config/montage/config"
+printf 'not-a-number\n' >"$HOME/.local/state/montage/last-backup"
 status_json
 assert_ok "status --json survives a stamp that is not a number"
 assert_equals "$(jq -r '.lastBackup' <<<"$OUT")" "0" \
@@ -39,7 +45,7 @@ assert_equals "$(jq -r '.lastBackup' <<<"$OUT")" "0" \
 
 # ---- 3. a vault whose manifest is not JSON --------------------------------
 
-printf 'not json at all\n' >"$HOME/.local/share/ress/vault/ress.json"
+printf 'not json at all\n' >"$HOME/.local/share/montage/vault/backup.json"
 status_json
 assert_ok "status --json survives a manifest it cannot read"
 assert_equals "$(jq -r '.manifest' <<<"$OUT")" "null" "and says so"
@@ -48,11 +54,12 @@ assert_equals "$(jq -r '.hasVault' <<<"$OUT")" "1" "while still reporting the va
 # ---- 4. the ordinary answer is unchanged ----------------------------------
 
 printf 'INCLUDE_PACKAGES=1\nINCLUDE_OMARCHY=1\nAUTO_INTERVAL_HOURS=12\n' \
-  >"$HOME/.config/ress/config"
-git -C "$HOME/.local/share/ress/vault" checkout -- ress.json
+  >"$HOME/.config/montage/config"
+git -C "$HOME/.local/share/montage/vault" checkout -- backup.json
 
 status_json
 assert_ok "status --json on an ordinary config"
+assert_equals "$(jq -r '.kind' <<<"$OUT")" "montage-status" "status JSON is versioned and identified"
 assert_equals "$(jq -r '.intervalHours' <<<"$OUT")" "12" "the interval it was told"
 assert_equals "$(jq -r '.categories.packages' <<<"$OUT")" "true" "the categories that are on"
 assert_equals "$(jq -r '.categories.secrets' <<<"$OUT")" "false" "and the one that is not"

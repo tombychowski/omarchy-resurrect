@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "ressVersion": "1.2.0",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "machine": {"hostname": "ress-fixture", "user": "fixture", "omarchyVersion": "4.0.0", "kernel": "6.0"},
+  "categories": ["packages", "config", "omarchy", "webapps", "plugins", "secrets"],
+  "counts": {"packages": 2, "config": 1, "themes": 0, "webapps": 0, "plugins": 3, "secrets": 1, "uncaptured": 0, "services": 0}
+}
+

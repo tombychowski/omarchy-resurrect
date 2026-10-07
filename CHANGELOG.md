@@ -1,5 +1,17 @@
 # Changelog
 
+## Montage 1.0.0 — independent release
+
+- Publishes the separate `tombychowski.montage` Omarchy plugin and `mntg` CLI.
+- Owns Montage-specific XDG roots, native repository envelopes, stable loadout
+  libraries, immutable vault history, and conservative Git synchronization.
+- Adds explicit Ress v1 inspection, import, and disposable export between
+  separate paths; there is no shared live state or compatibility command alias.
+- Replaces the panel with Montage repository, history, sync, settings, Share,
+  applied-loadout, retention, and port consumer surfaces.
+- Preserves the historical entries below as records of the predecessor fork;
+  they are not current Montage installation or command guidance.
+
 Newest first. The version here is the one in `manifest.json` and in
 `ress --version`; the plugin id stays `tsouth89.resurrect` whatever the version,
 for the reason in the README.

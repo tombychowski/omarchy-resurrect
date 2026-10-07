@@ -13,10 +13,10 @@ write_package_loadout() {
      plugins:[],webapps:[],theme:{name:"",url:"",commit:""}}' >"$dir/profile.json"
 }
 
-registry_path() { printf '%s/ress/loadouts.json' "$XDG_STATE_HOME"; }
+registry_path() { printf '%s/montage/loadouts.json' "$XDG_STATE_HOME"; }
 
 first_loadout_id() { jq -r '.loadouts[0].id' "$(registry_path)"; }
 
 apply_yes() {
-  ress apply --yes "$1"
+  mntg apply --yes "$1"
 }

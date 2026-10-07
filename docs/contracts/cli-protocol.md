@@ -7,6 +7,29 @@ The CLI exposes two machine-readable surfaces:
 
 Consumers must select one of these surfaces instead of parsing human output. The `cli-consumer-protocol` OpenSpec capability owns the observable guarantees.
 
+All current Montage JSON envelopes carry integer `schemaVersion: 1` and a
+`kind` beginning `montage-`. Repository and history results bind mutable local
+selectors to stable identities:
+
+- `montage-repository-list`, `montage-repository-show`, and
+  `montage-repository-validation` carry configured name, native repository id,
+  repository kind, canonical path, sanitized remote, validity, and status;
+- `montage-loadout-catalog` carries `repositoryId`, the current exact
+  `repositoryCommit`, and items with stable `id`, digest, repository identity,
+  commit identity, and relative portable-leaf path;
+- `montage-backup-list` and `montage-backup-show` carry `repositoryId`, with
+  each backup identified by full `commit` plus optional validated labels;
+- `montage-repository-sync` carries repository id and kind, exact local and
+  fetched commits, relationship, ahead/behind counts, fetch status, and action;
+- `montage-port-report` carries a stable adapter `format`, operation, foreign
+  artifact type and version, source and separate destination, selected revisions, warnings,
+  itemized losses, mutations, compatibility, publication state, and any
+  generated repository, loadout, or commit identities.
+
+Applied-loadout, resource, status, verification, and share-catalog results use
+the same version/kind convention. A nonzero result that advertises JSON still
+emits exactly one complete report when a safe structured refusal is available.
+
 ## General rules
 
 - Machine-readable data is written to standard output.
@@ -27,6 +50,39 @@ PROGRESS|<category>|<done>|<total>
 LOG|<message>
 DONE|<state>|<message>
 ```
+
+Repository synchronization adds `SYNC|1|<relationship>|<ahead>|<behind>|<fetch-ok>|<performed>|<action-ok>|<reason>` after a repository-identified `BEGIN` record. Port previews add `PORT|1|<format>|<operation>|<artifact-type>|<compatible>|<published>|<reason>`, followed by zero or more `PORT_REVISION` and `PORT_LOSS` records and an optional `PORT_IDENTITY`. These records contain validated format ids, resource ids, commit hashes, booleans, counts, and bounded reason codes; paths and free-form artifact content are not placed in fixed protocol fields.
+
+### `mntg port FORMAT ... --json`
+
+Every supported adapter uses one extensible envelope:
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "montage-port-report",
+  "format": "ress-v1",
+  "operation": "plan",
+  "artifactType": "vault",
+  "artifactVersion": 1,
+  "supportedArtifactVersion": 1,
+  "source": "/absolute/source",
+  "destination": "/absolute/separate-destination",
+  "selectedRevisions": [],
+  "warnings": [],
+  "losses": [],
+  "mutations": [],
+  "compatible": true,
+  "reason": null,
+  "published": false
+}
+```
+
+`format` is a bounded lowercase identifier. Adapter-specific fields may be
+added, and `artifactType` is also a bounded lowercase identifier rather than a
+closed Ress-specific enumeration. Consumers validate the common decision
+fields and tolerate fields they do not use. A safe structured refusal uses the same envelope with
+`compatible: false`, a bounded `reason`, and a nonzero exit status.
 
 ### `BEGIN`
 
@@ -73,14 +129,14 @@ Consumers must also handle process exit without a `DONE` record, because argumen
 
 ## JSON commands
 
-### `ress status --json`
+### `mntg status --json`
 
 Status always attempts to return the current configured view, using safe fallback values for malformed hand-edited state.
 
 ```json
 {
   "hasVault": true,
-  "vault": "/home/user/.local/share/ress/vault",
+  "vault": "/home/user/.local/share/montage/vault",
   "remote": "https://github.com/user/private-vault",
   "lastBackup": 1791043200,
   "commits": 3,
@@ -107,7 +163,7 @@ Status always attempts to return the current configured view, using safe fallbac
 
 `manifest` is the parsed vault manifest when readable, otherwise `null`. Malformed boolean-like values fall back safely, malformed timestamps and counts become safe numbers, and a malformed manifest does not erase the surrounding status object. `hasVault` reflects recognition of a supported manifest path, not successful parsing of every manifest field.
 
-### `ress verify --json`
+### `mntg verify --json`
 
 Verification compares reconstructible vault entries with the current machine:
 
@@ -134,7 +190,7 @@ Current category keys are `packages`, `config`, `themes`, `webapps`, `plugins`, 
 
 Exit status is zero when `complete` is true and non-zero when restorable entries are missing or differ. Refused inventory is reported but is not counted as missing restorable work.
 
-### `ress scan --json`
+### `mntg scan --json`
 
 Credential scanning returns:
 
@@ -154,13 +210,13 @@ when one or more findings exist.
 
 ### Applied-loadout JSON
 
-`ress loadout list --json` emits one object with a `loadouts` array. Each item includes stable local `id`, display metadata, sanitized `source`, digest, timestamps, precedence, lifecycle `state`, `resourceCount`, and `attentionCount`. The stored normalized profile is omitted unless `--contents` is present.
+`mntg loadout list --json` emits one object with a `loadouts` array. Each item includes stable local `id`, display metadata, sanitized `source`, digest, timestamps, precedence, lifecycle `state`, `resourceCount`, and `attentionCount`. The stored normalized profile is omitted unless `--contents` is present.
 
-`ress loadout show ID --json` emits `{loadout, claims, resources}` for one local identity. `--contents` includes `loadout.profile`; otherwise executable-shaped remote references remain hidden from the ordinary inventory.
+`mntg loadout show ID --json` emits `{loadout, claims, resources}` for one local identity. `--contents` includes `loadout.profile`; otherwise executable-shaped remote references remain hidden from the ordinary inventory.
 
-`ress resource list --json` emits `{resources:[...]}` and accepts `--state STATE`. `ress resource show RESOURCE-ID --json` emits one resource with `firstObserved`, `cleanupPolicy`, recorded state/evidence, and `claimants`, the local loadout ids related through claims.
+`mntg resource list --json` emits `{resources:[...]}` and accepts `--state STATE`. `mntg resource show RESOURCE-ID --json` emits one resource with `firstObserved`, `cleanupPolicy`, recorded state/evidence, and `claimants`, the local loadout ids related through claims.
 
-`ress loadout check [ID] --json` performs live inspection and emits:
+`mntg loadout check [ID] --json` performs live inspection and emits:
 
 ```json
 {
@@ -181,11 +237,11 @@ when one or more findings exist.
 
 `healthState` is the consumer-facing classification. It reports protected resources explicitly and folds deferred or removal-pending claims into `pending`; `currentState` remains the direct machine observation. Its exit status is non-zero when any selected resource is not currently satisfied. Inspection does not repair or update the registry.
 
-`ress status --json` additionally contains `loadouts:{available,count,attention}`. A missing registry is an available empty inventory. A malformed or unsupported registry produces `available:false` and null counts without erasing valid backup status.
+`mntg status --json` additionally contains `loadouts:{available,count,attention}`. A missing registry is an available empty inventory. A malformed or unsupported registry produces `available:false` and null counts without erasing valid backup status.
 
 Loadout mutations use the same porcelain record grammar as restore. A fully healthy apply ends with `DONE|ok|...`; deferred, failed, conflicting, or uncertain work ends with `DONE|partial|...` and a non-zero status. Consumers must not reinterpret warning prose as success.
 
-### `ress share catalog --json [--out DIR]`
+### `mntg share catalog --repository NAME --loadout ID --json`
 
 The share catalog is the complete local discovery boundary for a loadout
 composer. It returns exactly one schema-versioned object. `--out` selects which
@@ -194,6 +250,10 @@ current exported profile is compared; it does not change any files.
 ```json
 {
   "schemaVersion": 1,
+  "kind": "montage-share-catalog",
+  "repositoryId": "personal-library",
+  "loadoutId": "small-setup",
+  "repositoryCommit": "0123456789abcdef0123456789abcdef01234567",
   "resources": [{
     "id": "package:fd",
     "kind": "package",

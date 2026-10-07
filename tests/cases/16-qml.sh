@@ -1,9 +1,81 @@
-# The QML half. bin/ress is covered by everything else here; Panel.qml,
+# The QML half. bin/mntg is covered by everything else here; Panel.qml,
 # Service.qml and Model.js are not, and a broken binding is a widget that
 # vanishes from the bar with an error only the shell's log ever sees.
 
 QMLLINT=/usr/lib/qt6/bin/qmllint
 OMARCHY_SHELL=/usr/share/omarchy/shell
+
+# Montage is an independent plugin and IPC target. These assertions run even
+# when qmllint is unavailable, so coexistence identity does not depend on a
+# particular desktop image.
+assert_equals "$(jq -r '.id' "$REPO_DIR/manifest.json")" "tombychowski.montage" \
+  "the manifest publishes the Montage plugin id"
+assert_equals "$(jq -r '.name' "$REPO_DIR/manifest.json")" "montage" \
+  "the manifest publishes the Montage package name"
+assert_equals "$(jq -r '.barWidget.displayName' "$REPO_DIR/manifest.json")" "Montage" \
+  "the bar widget is branded Montage"
+assert_file_contains "$REPO_DIR/Panel.qml" 'moduleName: "tombychowski.montage"' \
+  "the panel uses the Montage module id"
+assert_file_contains "$REPO_DIR/Panel.qml" 'ipcTarget: "tombychowski.montage"' \
+  "the panel uses the Montage IPC target"
+assert_file_contains "$REPO_DIR/Service.qml" 'Qt.resolvedUrl("bin/mntg")' \
+  "the service invokes only the Montage CLI"
+if grep -Eq 'tsouth89\.resurrect|Qt\.resolvedUrl\("bin/ress"\)' \
+    "$REPO_DIR/manifest.json" "$REPO_DIR/Panel.qml" "$REPO_DIR/Service.qml"; then
+  _fail "Montage runtime identity overlaps the published Ress plugin"
+else
+  _pass
+fi
+
+# Every rich panel view is obtained from one documented mntg JSON command.
+# Keep these checks outside qmllint availability so the consumer boundary is
+# enforced in minimal CI images too.
+for route in \
+  '"repository", "list", "--json"' \
+  '"repository", "loadouts", selectedRepositoryName, "--json"' \
+  '"backup", "list", "--json"' \
+  '"repository", "sync", name, "--json"' \
+  '"share", "catalog", "--repository", repo' \
+  '"loadout", "list", "--json", "--contents"' \
+  '"loadout", "check", "--json"' \
+  '"port", "ress", "plan"'; do
+  grep -qF "$route" "$REPO_DIR/Service.qml" ||
+    _fail "Service.qml is missing CLI consumer route: $route"
+done
+_pass
+
+for parser in parseRepositoryList parseLoadoutCatalog parseBackupList parseSyncResult \
+  parseShareCatalog parseLoadoutList parseLoadoutCheck parsePortReport; do
+  grep -q "Model\.$parser" "$REPO_DIR/Service.qml" ||
+    _fail "Service.qml does not validate $parser output"
+done
+_pass
+
+if grep -Eq 'Qt\.resolvedUrl\("bin/(ress|montage)"\)|\["(git|ress|montage)"' \
+    "$REPO_DIR/Panel.qml" "$REPO_DIR/Service.qml"; then
+  _fail "QML invokes an old command path or invokes Git directly"
+else
+  _pass
+fi
+if grep -Eq 'montage\.json|profile\.json|backup\.json|ress\.json|resurrect\.json|loadouts\.json|/\.git([/" ]|$)' \
+    "$REPO_DIR/Panel.qml" "$REPO_DIR/Service.qml"; then
+  _fail "QML must not parse repository controls, leaves, history, or Git state directly"
+else
+  _pass
+fi
+
+for label in 'Loading repositories…' 'Repository is healthy.' 'Review divergence in terminal' \
+  'Selected loadout' 'Restore this exact backup' 'Preview retention' 'Run retention in terminal' \
+  'Preview Ress port' 'Publish port in terminal'; do
+  grep -qF "$label" "$REPO_DIR/Panel.qml" || _fail "Panel.qml is missing documented label: $label"
+  grep -qF "$label" "$REPO_DIR/docs/panel/status-language.md" ||
+    _fail "panel language does not document QML label: $label"
+done
+_pass
+for doc in principles status-language cli-integration keyboard-workflow settings; do
+  [[ -f "$REPO_DIR/docs/panel/$doc.md" ]] || _fail "missing panel documentation: $doc.md"
+done
+_pass
 
 # ---- 1. Model.js is plain JavaScript, so it gets real unit tests ---------
 
@@ -60,7 +132,8 @@ if [[ -x $QMLLINT && -d $OMARCHY_SHELL ]]; then
   assert_equals "$MISSING" "" "every engine.<member> the panel binds to exists on the engine"
   # ...and the ids in the row list have to match the ones trigger() handles,
   # or a click does nothing.
-  for id in aur units backup restore auto copy folder url preview apply loadout-update loadout-repair loadout-remove \
+  for id in aur units backup restore auto copy folder loadout-update loadout-repair loadout-remove \
+    sync-preview repository-loadout-compose repository-loadout-preview repository-loadout-apply repository-backup-restore \
     share-start-all share-start-current share-start-empty share-name share-description share-search \
     share-export share-back; do
     grep -q "\"$id\"" "$REPO_DIR/Panel.qml" ||
@@ -68,16 +141,56 @@ if [[ -x $QMLLINT && -d $OMARCHY_SHELL ]]; then
   done
   _pass
   grep -q '"loadouts"' "$REPO_DIR/Panel.qml" && _pass || _fail "Panel.qml exposes a Loadouts tab"
+  grep -q '"repositories"' "$REPO_DIR/Panel.qml" && _pass || _fail "Panel.qml exposes a Repositories tab"
+  for state in empty invalid loading healthy stale divergent attention; do
+    grep -q "\"$state\"" "$REPO_DIR/Panel.qml" "$REPO_DIR/Model.js" ||
+      _fail "repository panel model does not expose $state state"
+  done
+  _pass
+  grep -q 'rowId: "repository:"' "$REPO_DIR/Panel.qml" &&
+    grep -q 'rowId: "repository-loadout:"' "$REPO_DIR/Panel.qml" &&
+    grep -q 'rowId: "repository-backup:"' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "repository, loadout, and backup selections are not keyboard rows"
+  grep -q 'restoreTerminalArgs(vaultPath, commit)' "$REPO_DIR/Service.qml" &&
+    grep -q '"restore", "--backup", commit' "$REPO_DIR/Service.qml" &&
+    grep -q 'title: "Restore this exact backup"' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "exact backup restore is not pinned to the selected full commit"
+  grep -q 'repositoryConfigureTerminalArgs(name, path, type, remote, replace)' "$REPO_DIR/Service.qml" &&
+    grep -q '"repository", "configure"' "$REPO_DIR/Service.qml" &&
+    grep -q 'Model.stripCredentials(remote)' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "repository settings do not use the locked CLI configuration boundary with sanitized remotes"
+  grep -q 'Model.isRessLocation(repositorySettingPath)' "$REPO_DIR/Panel.qml" &&
+    grep -q 'Ress directory is a read-only migration source' "$REPO_DIR/Panel.qml" &&
+    grep -q 'engine.previewPort(portSource, portDestination, false)' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "Ress locations are not explicitly isolated as one-time port sources"
+  for helper in openRestore openRetention openSync openPortImport openLoadoutAction; do
+    grep -q "function $helper" "$REPO_DIR/Service.qml" ||
+      _fail "risky action is missing interactive terminal helper: $helper"
+  done
+  grep -q '\["omarchy-launch-terminal", cli' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "risky repository actions are not launched in an interactive terminal"
+  grep -q 'previewRetention' "$REPO_DIR/Service.qml" &&
+    grep -q '"--dry-run"' "$REPO_DIR/Service.qml" &&
+    grep -q 'previewPort' "$REPO_DIR/Service.qml" &&
+    grep -q 'previewSync' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "retention, port, and sync previews are not separated from terminal publication"
+  grep -q '"restore", "--backup", commit' "$REPO_DIR/Service.qml" &&
+    grep -q '"backup", "retain", "--keep"' "$REPO_DIR/Service.qml" &&
+    grep -q '"port", "ress", "import"' "$REPO_DIR/Service.qml" && _pass ||
+    _fail "terminal commands do not retain exact restore, retention, and port identities"
+  grep -q 'Model.consent(engine.aurMode' "$REPO_DIR/Panel.qml" &&
+    grep -q 'openRepositoryApply' "$REPO_DIR/Panel.qml" && _pass ||
+    _fail "panel no longer preserves visible AUR consent around terminal apply"
   grep -q 'loadout", "list", "--json", "--contents"' "$REPO_DIR/Service.qml" && _pass ||
     _fail "Service.qml reads applied loadouts through documented CLI JSON"
   grep -q 'loadout", "check", "--json"' "$REPO_DIR/Service.qml" && _pass ||
     _fail "Service.qml reads live loadout health through documented CLI JSON"
-  grep -q '"share", "catalog", "--json"' "$REPO_DIR/Service.qml" && _pass ||
+  grep -q '"share", "catalog", "--repository", repo' "$REPO_DIR/Service.qml" && _pass ||
     _fail "Service.qml reads the Share catalog through documented CLI JSON"
   grep -q 'function refreshShareCatalog' "$REPO_DIR/Service.qml" &&
     grep -q 'if (name === "share" && opened) engine.refreshShareCatalog()' "$REPO_DIR/Panel.qml" && _pass ||
     _fail "the catalog is requested only through the active Share workflow"
-  grep -q 'function shareCustom(name, description, ids, acknowledgements)' "$REPO_DIR/Service.qml" &&
+  grep -q 'function shareCustom(repositoryName, loadoutId, name, description, ids, acknowledgements)' "$REPO_DIR/Service.qml" &&
     grep -q 'args = args.concat(\["--select", selected\[i\]\])' "$REPO_DIR/Service.qml" &&
     grep -q '"--acknowledge-unavailable", resourceId' "$REPO_DIR/Service.qml" && _pass ||
     _fail "selective export uses argument-array ids and acknowledgement fingerprints"

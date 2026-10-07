@@ -66,11 +66,11 @@ DESKTOP
 
 # ---- 3. the capture --------------------------------------------------------
 
-ress init
-assert_ok "ress init"
-VAULT="$XDG_DATA_HOME/ress/vault"
+mntg init
+assert_ok "mntg init"
+VAULT="$XDG_DATA_HOME/montage/vault"
 
-ress backup -m webapps
+mntg backup -m webapps
 assert_ok "the backup"
 
 assert_file "$VAULT/webapps/apps/Quoted.desktop" "a quoted launcher is captured"
@@ -83,7 +83,7 @@ assert_output "Bad" "by name"
 
 # ---- 4. the restore --------------------------------------------------------
 
-ress --vault "$VAULT" restore --dry-run --yes
+mntg --vault "$VAULT" restore --dry-run --yes
 assert_ok "a dry run over the same vault"
 assert_output "https://teams.example.com/v2/a%20b --profile-directory=Microsoft365" \
   "the plan shows the flags it would rebuild with"
@@ -94,7 +94,7 @@ rm -rf "$HOME/.local/share/applications/Quoted.desktop" \
        "$HOME/.local/share/applications/Pct.desktop"
 : >"$CALLS"
 
-ress --vault "$VAULT" restore --yes
+mntg --vault "$VAULT" restore --yes
 assert_ok "the restore"
 
 # The quoted URL came back as a URL, not as a string with quotes in it.
@@ -116,7 +116,7 @@ assert_file_contains "$HOME/.local/share/applications/Teams.desktop" \
 assert_file_contains "$HOME/.local/share/applications/Pct.desktop" \
   "Exec=omarchy-launch-webapp \"https://example.com/b%%20c\"" \
   "and a percent is written back the way the spec spells it"
-assert_file "$HOME/.local/share/applications/Teams.desktop.ress-bak" \
+assert_file "$HOME/.local/share/applications/Teams.desktop.montage-bak" \
   "the launcher it replaced was kept"
 
 # The one that is not a launcher reached nothing, and is named as refused.
@@ -126,7 +126,7 @@ assert_output "Bad" "the refusal names it"
 
 # ---- 5. verify counts what a restore can rebuild ---------------------------
 
-ress --vault "$VAULT" verify --json
+mntg --vault "$VAULT" verify --json
 assert_ok "verify: the machine matches for everything restorable"
 assert_equals "$(jq -r '.categories.webapps.want' <<<"$OUT")" "3" \
   "three launchers a restore can rebuild"
@@ -138,8 +138,8 @@ assert_equals "$(jq -r '.complete' <<<"$OUT")" "true" \
 
 # ---- 6. a loadout carries the launchers it can and says what it left out ----
 
-ress share --out "$SANDBOX/loadout"
-assert_ok "ress share"
+mntg share --out "$SANDBOX/loadout"
+assert_ok "mntg share"
 assert_output "left out of the profile" "the flagged launcher is called out"
 assert_equals \
   "$(jq -r '[.webapps[].name] | sort | join(",")' "$SANDBOX/loadout/profile.json")" \
@@ -162,12 +162,12 @@ Type=Application
 DESKTOP
 seal_vault "$VAULT4"
 
-ress --vault "$VAULT4" restore --yes
+mntg --vault "$VAULT4" restore --yes
 assert_ok "a vault whose launcher file is not named after its Name= field"
 assert_called "omarchy webapp install Beta https://beta.example.com/ beta" \
   "the restore rebuilds it under the name in the file"
 
-ress --vault "$VAULT4" verify --json
+mntg --vault "$VAULT4" verify --json
 assert_ok "verify matches a launcher the restore just created"
 assert_equals "$(jq -r '.categories.webapps | "\(.want)/\(.have)"' <<<"$OUT")" "1/1" \
   "it looks for the name, not the file name"
@@ -193,14 +193,14 @@ DESKTOP
 cp "$HOME/.local/share/applications/TwoExec.desktop" "$VAULT4/webapps/apps/TwoExec.desktop"
 seal_vault "$VAULT4"
 
-ress --vault "$VAULT4" verify --json
+mntg --vault "$VAULT4" verify --json
 assert_ok "verify stays a match with a launcher it cannot rebuild"
 assert_equals "$(jq -r '.categories.webapps.want' <<<"$OUT")" "1" \
   "the one it cannot rebuild is not counted as work"
 assert_equals "$(jq -r '.categories.webapps.refused[0]' <<<"$OUT")" "TwoExec" "it is listed as refused"
 
-ress share --out "$SANDBOX/loadout2"
-assert_ok "ress share beside a launcher that cannot come back"
+mntg share --out "$SANDBOX/loadout2"
+assert_ok "mntg share beside a launcher that cannot come back"
 assert_equals "$(jq -r '[.webapps[].name] | index("TwoExec")' "$SANDBOX/loadout2/profile.json")" \
   "null" "a launcher a restore would refuse is not published in a loadout"
 
@@ -227,7 +227,7 @@ Type=Application
 DESKTOP
 seal_vault "$VAULT5"
 
-ress --vault "$VAULT5" verify --json
+mntg --vault "$VAULT5" verify --json
 assert_fails "verify reports the launchers it cannot find"
 assert_equals "$(jq -r '.categories.webapps.missing | length' <<<"$OUT")" "2" \
   "two launchers, not one entry per word"
@@ -252,17 +252,17 @@ Type=Application
 DESKTOP
 seal_vault "$VAULT6"
 
-ress --vault "$VAULT6" verify --json
+mntg --vault "$VAULT6" verify --json
 assert_equals "$(jq -r '.categories.webapps.want' <<<"$OUT")" "0" \
   "a launcher a restore refuses is not counted as work"
 assert_equals "$(jq -r '.categories.webapps.refused | join("|")' <<<"$OUT")" "Bob's Site" \
   "and it is named in the refused list"
 
-ress --vault "$VAULT6" verify
+mntg --vault "$VAULT6" verify
 assert_output "1 entry a restore cannot rebuild" "the count reads as English"
 
 : >"$CALLS"
-ress --vault "$VAULT6" restore --yes
+mntg --vault "$VAULT6" restore --yes
 assert_ok "the restore survives a launcher it refuses"
 assert_not_called "webapp install Bob" "and does not install it"
 assert_output "Bob's Site" "the refusal names it"
@@ -285,11 +285,11 @@ VAULT7=$(make_vault "$SANDBOX/v7")
 cp "$HOME/.local/share/applications/Focus.desktop" "$VAULT7/webapps/apps/Focus.desktop"
 seal_vault "$VAULT7"
 
-ress --vault "$VAULT7" restore --dry-run --yes
+mntg --vault "$VAULT7" restore --dry-run --yes
 assert_output "(via launch-or-focus-webapp)" "the plan says which launcher it would write"
 
 : >"$CALLS"
-ress --vault "$VAULT7" restore --yes
+mntg --vault "$VAULT7" restore --yes
 assert_ok "the restore of an or-focus launcher"
 assert_called "omarchy webapp install Focus https://focus.example.com/ focus omarchy-launch-or-focus-webapp https://focus.example.com/" \
   "the launcher form travels with the URL"
@@ -302,7 +302,7 @@ assert_file_contains "$HOME/.local/share/applications/Focus.desktop" \
 # TwoExec was written into the home directory in section 8 and never warned
 # about, because the capture only asked whether the first Exec line parsed.
 
-ress backup -m launchers
+mntg backup -m launchers
 assert_ok "a backup beside a launcher with a Desktop Action"
 assert_output "cannot re-create" "the capture says a restore will refuse it"
 assert_output "TwoExec" "by name"
@@ -324,7 +324,7 @@ VAULT8=$(make_vault "$SANDBOX/v8")
 seal_vault "$VAULT8"
 
 started=$(date +%s)
-ress --vault "$VAULT8" verify --json
+mntg --vault "$VAULT8" verify --json
 took=$(( $(date +%s) - started ))
 assert_equals "$(jq -r '.categories.webapps.refused | join("|")' <<<"$OUT")" "Huge" \
   "a 40 KB Exec line is refused"

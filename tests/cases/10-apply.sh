@@ -1,4 +1,4 @@
-# `ress apply` installs someone else's loadout: a preview, one confirmation,
+# `mntg apply` installs someone else's loadout: a preview, one confirmation,
 # and the same AUR question a restore asks — because a loadout comes from a
 # stranger by design.
 
@@ -27,7 +27,7 @@ jq -n --arg url "$(remote_url some-widget)" --arg sha "$PLUGIN_SHA" \
 
 # ---- 1. the dry run installs nothing --------------------------------------
 
-ress apply --dry-run "$PROFILE"
+mntg apply --dry-run "$PROFILE"
 assert_ok "apply --dry-run"
 assert_output "Someone Else" "the loadout names itself"
 assert_output "2 packages from the Arch repos"
@@ -42,14 +42,14 @@ assert_not_called "yay -S"
 
 # ---- 2. declining installs nothing ----------------------------------------
 
-ress_answer "n" -- apply "$PROFILE"
+montage_answer "n" -- apply "$PROFILE"
 assert_fails "declining cancels"
 assert_output "cancelled"
 assert_not_called "pacman -S --needed"
 
 # ---- 3. accepting the loadout still asks about the AUR separately ---------
 
-ress_answer "y" "n" -- apply "$PROFILE"
+montage_answer "y" "n" -- apply "$PROFILE"
 assert_fails "apply records a partial result when AUR work is declined"
 assert_output "state: pending"
 assert_called "pacman -S --needed --noconfirm -- fd ripgrep" "repo packages install"
@@ -67,7 +67,7 @@ assert_equals "$(git -C "$HOME/.config/omarchy/plugins/acme.widget" rev-parse HE
 
 rm -rf "$HOME/.config/omarchy/plugins/acme.widget"
 : >"$FAKE_STATE/native.txt"; : >"$CALLS"
-ress apply --yes --aur "$PROFILE"
+mntg apply --yes --aur "$PROFILE"
 assert_ok "apply --yes --aur"
 assert_called "yay -S --needed --noconfirm --answerclean None --answerdiff None -- brave-bin"
 
@@ -75,31 +75,31 @@ assert_called "yay -S --needed --noconfirm --answerclean None --answerdiff None 
 
 # The next scenarios exercise independent first applications. A changed profile
 # at the same source is now intentionally routed through `loadout update`.
-rm -f "$XDG_STATE_HOME/ress/loadouts.json"
+rm -f "$XDG_STATE_HOME/montage/loadouts.json"
 
 jq 'del(.plugins[0].commit) | del(.theme.commit)' "$PROFILE/profile.json" >"$PROFILE/unpinned.json"
 mv "$PROFILE/unpinned.json" "$PROFILE/profile.json"
 rm -rf "$HOME/.config/omarchy/plugins/acme.widget" "$HOME/.config/omarchy/themes/rose-pine"
 
-ress apply --dry-run "$PROFILE"
+mntg apply --dry-run "$PROFILE"
 assert_output "names no commit" "an unpinned plugin is called out"
 assert_no_output "acme.widget  " "and is not listed as something that will be installed"
 
-ress apply --yes --no-aur "$PROFILE"
+mntg apply --yes --no-aur "$PROFILE"
 assert_no_file "$HOME/.config/omarchy/plugins/acme.widget/manifest.json" "and is not installed"
 
-ress apply --yes --no-aur --allow-unpinned "$PROFILE"
+mntg apply --yes --no-aur --allow-unpinned "$PROFILE"
 assert_ok "with --allow-unpinned it is"
 assert_dir "$HOME/.config/omarchy/plugins/acme.widget"
 
 # ---- 6. a loadout cannot smuggle a command through a package name --------
 
-rm -f "$XDG_STATE_HOME/ress/loadouts.json"
+rm -f "$XDG_STATE_HOME/montage/loadouts.json"
 
 jq '.packages.native = ["--overwrite=/etc/passwd", "ripgrep"]' "$PROFILE/profile.json" >"$PROFILE/evil.json"
 mv "$PROFILE/evil.json" "$PROFILE/profile.json"
 : >"$FAKE_STATE/native.txt"; : >"$CALLS"
-ress apply --yes --no-aur "$PROFILE"
+mntg apply --yes --no-aur "$PROFILE"
 assert_output "refused 1 unsafe package names"
 assert_not_called "overwrite" "an option-shaped name never reaches pacman"
 assert_called "pacman -S --needed --noconfirm -- ripgrep" "and the rest still installs"

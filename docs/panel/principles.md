@@ -1,71 +1,66 @@
 # Panel principles
 
-The ress panel is a compact native Omarchy surface over the CLI. It makes backup freshness, capture choices, and common actions visible without becoming an independent backup engine or a second interpretation of the vault.
+The Montage panel is a compact native Omarchy surface over `mntg`. It presents
+validated CLI state and dispatches CLI actions; it is not a repository reader,
+Git client, restore engine, or second source of truth.
 
-## One glance, one decision
+## One glance, then progressive detail
 
-The bar icon answers whether a backup exists, is current, is stale, or an operation is running. Opening the panel adds the last-backup age, captured summary, category choices, and the actions most likely to matter now.
+The bar icon answers whether a backup is missing, current, stale, or running.
+The four tabs then separate distinct decisions:
 
-The panel should not present a dashboard merely because more data is available. Details belong only when they help the user decide whether to back up, restore, share, apply, or change a safety-relevant setting.
+- **Backup** shows freshness, capture categories, schedule, and consent policy.
+- **Repositories** selects configured loadout or vault repositories, stable
+  loadouts or immutable backup commits, sync state, settings, and Ress porting.
+- **Share** composes the explicitly selected repository loadout.
+- **Loadouts** shows desired state already applied to this machine.
 
-## The CLI is the authority
+Repository details appear only after an explicit selection. The panel never
+loads an entire package inventory at the top level.
 
-The panel obtains durable state from `ress status --json` and `ress loadout list --json --contents`, live resource health from `ress loadout check --json`, share candidates and starting choices from `ress share catalog --json`, and operation state from the porcelain protocol. It invokes CLI commands for mutations. It does not inspect vault, profile, package, integration, or registry files, recreate validation rules, or infer success from animation or elapsed time.
+## The CLI is authoritative
 
-If status cannot be parsed, the panel discards it. It must not fill missing vault facts from guesses. Process stderr, terminal records, and exit status determine operation errors.
+`Service.qml` invokes only `bin/mntg`. Repository catalogs, loadout items,
+backup history, synchronization, selective-share catalogs, applied-loadout
+health, retention previews, and Ress port previews come from documented JSON.
+Operations use the documented porcelain protocol. A malformed result becomes
+unavailable; QML does not inspect Git, `montage.json`, profile leaves, backup
+manifests, or local registries to fill the gap.
 
-See the [CLI protocol contract](../contracts/cli-protocol.md).
+See [CLI integration](cli-integration.md) and the
+[consumer protocol](../contracts/cli-protocol.md).
 
-## Progressive disclosure follows risk
+## Risk stays visible
 
-Low-risk, familiar actions stay close:
+Read-only catalog and preview requests may run in the panel. Actions that can
+install software, require privilege, rewrite history, resolve synchronization,
+delete exclusively owned resources, restore machine state, or publish a port
+open an interactive terminal. The terminal preserves previews, confirmations,
+AUR review, service consent, and error output.
 
-- back up now;
-- export a loadout;
-- toggle capture categories;
-- change scheduled-backup and consent policies; and
-- copy or open the generated share location.
+The panel never silently supplies `--yes`, force-pushes, resets history, chooses
+a loss waiver, or converts one plugin identity into another.
 
-Share uses progressive disclosure of complexity. It first asks for an explicit
-starting point—All shareable resources is the short recommended path, while
-Current export, Empty selection, and an applied loadout enable precise work.
-Composition then reveals metadata, category summaries, bounded category search,
-resource toggles, additive presets, and unavailable-item acknowledgements. The
-top level never renders the full package inventory.
+## Repositories are selected by identity
 
-Actions needing longer review or interaction move to a terminal:
+A configured name resolves through `mntg repository list --json` to a validated
+path, kind, stable repository id, and credential-free remote. Loadout selection
+uses a stable item id. Backup selection uses the full immutable commit. Apply,
+share, and restore handoffs retain those identities.
 
-- restore, because it can write many files, install packages, need `sudo`, and ask separate consent questions;
-- loadout preview, because the exact package and integration list should have room to be read; and
-- loadout apply, update, and repair, because they confirm and can install software; and
-- loadout removal, because it can delete exclusively owned resources and needs a complete retention/cleanup review.
+Ress directories are never Montage live state. They appear only as read-only
+port sources paired with a separate Montage destination.
 
-Opening a terminal is part of the trust model, not a fallback presentation failure. Privilege and prompts remain visible and answerable.
+## Keyboard and pointer are peers
 
-## Show policy in words
+Every action is represented in the row model used by pointer and keyboard
+activation. Arrow navigation, Enter, Escape from text fields, tab switching,
+and direct `b`, `r`, `o`, `s`, `a`, and `l` shortcuts are supported. Exact
+bindings and focus expectations are in [Keyboard workflow](keyboard-workflow.md).
 
-The panel does not reduce three-state consent choices to an ambiguous toggle. AUR and service policies read as:
+## Honest language
 
-- asks first;
-- proceeds without asking; or
-- never performs the action.
-
-Secrets are visibly identified as encrypted and off by default. Loadout copy explains that profiles have no dotfiles or attachments.
-
-## Progress comes from real work
-
-During in-panel backup or share operations, labels, categories, progress, logs, and terminal state come from protocol records. Unknown lines are ignored instead of partially interpreted. Indeterminate progress is acceptable when the CLI has reported a running step but no meaningful total.
-
-The panel never estimates completion from time. A stale successful backup remains a freshness condition, not a failed current operation.
-
-## Compact, keyboard-first interaction
-
-The same actions remain available to pointer and keyboard users. Cursor movement, tab switching, activation, direct `b`/`r`/`s`/`a`/`l` shortcuts, and closing are first-class paths. Focus entering the profile URL, loadout name, description, or Share search fields must also have an Escape path back to panel navigation.
-
-The panel keeps a predictable three-tab structure—Backup, Share, Loadouts—and preserves selection language across pointer and keyboard interaction. Share distinguishes the authored **current export** from **applied loadouts**, which are selection seeds and never an authored library. The Loadouts tab first gives count and attention, then rows, then selected metadata and corrective actions.
-
-## Honest outcomes
-
-Success, partial completion, failure, deferred work, and missing status are different conditions. The panel should retain those distinctions even when it summarizes them into short language. It must not present a stale backup as a failure, a parse failure as empty truth, or a completed process as success solely because it exited the progress view.
-
-The exact current wording is defined in [Status language](status-language.md); data flow and process boundaries are defined in [CLI integration](cli-integration.md).
+Missing, loading, invalid, healthy, stale, divergent, and attention are
+different states. So are operation success, partial completion, failure, and
+deferred work. The panel states only what the CLI result proves. Exact current
+wording is defined in [Status language](status-language.md).

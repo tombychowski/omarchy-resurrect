@@ -46,7 +46,7 @@ DESKTOP
 
 seal_vault "$VAULT"
 
-ress --vault "$VAULT" restore --dry-run
+mntg --vault "$VAULT" restore --dry-run
 assert_ok "dry run"
 
 # ---- what it says ---------------------------------------------------------
@@ -87,11 +87,11 @@ assert_file_contains "$HOME/.bashrc" "alias ll" "the real dotfile is untouched"
 assert_no_file "$HOME/.config/omarchy/themes/rose-pine" "no theme is cloned"
 assert_no_file "$HOME/.config/omarchy/themes" "a dry run does not even make the directory"
 assert_no_file "$HOME/.config/omarchy/plugins/acme.widget" "no plugin is cloned"
-assert_no_file "$HOME/.local/state/ress/restore.state" "a dry run records no progress"
+assert_no_file "$HOME/.local/state/montage/restore.state" "a dry run records no progress"
 
 # ---- the plan matches what the restore then does --------------------------
 
-ress --vault "$VAULT" restore --yes --aur
+mntg --vault "$VAULT" restore --yes --aur
 assert_ok "the real restore"
 assert_dir "$HOME/.config/omarchy/themes/rose-pine" "the pinned theme arrived"
 assert_dir "$HOME/.config/omarchy/themes/handmade" "the vault's own theme arrived"

@@ -9,7 +9,7 @@
 # form git@ssh.example:<name>, so a case can prove that a source naming its own
 # transport is handed to git exactly as written.
 # Rewriting globally would have capture record a /tmp path and restore then
-# refuse it as an unsafe remote — an artefact of the test, not of ress.
+# refuse it as an unsafe remote — an artefact of the test, not of mntg.
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 
 real=""

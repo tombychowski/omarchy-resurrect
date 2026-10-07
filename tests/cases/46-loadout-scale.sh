@@ -10,26 +10,26 @@ P10="$SANDBOX/scale-10"
 P50="$SANDBOX/scale-50"
 write_package_loadout "$P10" Scale-10 "${packages[@]:0:10}"
 write_package_loadout "$P50" Scale-50 "${packages[@]}"
-export RESS_OBSERVATION_LOG="$SANDBOX/observations.log"
+export MONTAGE_OBSERVATION_LOG="$SANDBOX/observations.log"
 REAL_JQ=$(command -v jq)
 COUNT_BIN="$SANDBOX/count-bin"
 mkdir -p "$COUNT_BIN"
 printf '%s\n' '#!/bin/bash' \
   'printf "jq\\n" >>"$CALLS"' \
-  'exec "$RESS_REAL_JQ" "$@"' >"$COUNT_BIN/jq"
+  'exec "$MONTAGE_REAL_JQ" "$@"' >"$COUNT_BIN/jq"
 chmod +x "$COUNT_BIN/jq"
-export RESS_REAL_JQ="$REAL_JQ"
+export MONTAGE_REAL_JQ="$REAL_JQ"
 export PATH="$COUNT_BIN:$PATH"
 
 run_counted() {
   : >"$CALLS"
-  : >"$RESS_OBSERVATION_LOG"
-  ress "$@"
+  : >"$MONTAGE_OBSERVATION_LOG"
+  mntg "$@"
   PACMAN_INVENTORIES=$(grep -c '^pacman -Qq$' "$CALLS" 2>/dev/null || true)
   JQ_CALLS=$(grep -c '^jq$' "$CALLS" 2>/dev/null || true)
-  PACKAGE_SNAPSHOTS=$(grep -c '^package-inventory$' "$RESS_OBSERVATION_LOG" 2>/dev/null || true)
-  THEME_SNAPSHOTS=$(grep -c '^active-theme$' "$RESS_OBSERVATION_LOG" 2>/dev/null || true)
-  REGISTRY_INDEXES=$(grep -c '^registry-index$' "$RESS_OBSERVATION_LOG" 2>/dev/null || true)
+  PACKAGE_SNAPSHOTS=$(grep -c '^package-inventory$' "$MONTAGE_OBSERVATION_LOG" 2>/dev/null || true)
+  THEME_SNAPSHOTS=$(grep -c '^active-theme$' "$MONTAGE_OBSERVATION_LOG" 2>/dev/null || true)
+  REGISTRY_INDEXES=$(grep -c '^registry-index$' "$MONTAGE_OBSERVATION_LOG" 2>/dev/null || true)
 }
 
 run_counted apply --dry-run "$P10"

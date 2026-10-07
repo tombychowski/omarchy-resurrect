@@ -42,7 +42,7 @@ case "${1:-}" in
     done
     exit $rc
     ;;
-  -Sgq) exit 1 ;;   # no such group here; ress treats that as "nothing to add"
+  -Sgq) exit 1 ;;   # no such group here; mntg treats that as "nothing to add"
   -Sy)  exit 0 ;;   # database refresh always succeeds in the sandbox
   -S)
     # Install what has been published to the repo; fail on anything else, which

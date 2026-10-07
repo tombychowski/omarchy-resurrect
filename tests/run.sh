@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# ress test runner.
+# mntg test runner.
 #
 #   tests/run.sh              run every case
 #   tests/run.sh restore      run cases whose name matches "restore"
@@ -38,10 +38,10 @@ done
 # Syntax first: a parse error makes every case fail in the same confusing way.
 # Keep this inventory filesystem-based so newly extracted modules are checked
 # before they have been committed.
-production_files=("$REPO_DIR/bin/ress")
-if [[ -d $REPO_DIR/lib/ress ]]; then
+production_files=("$REPO_DIR/bin/mntg")
+if [[ -d $REPO_DIR/lib/montage ]]; then
   while IFS= read -r file; do production_files+=("$file"); done < <(
-    find "$REPO_DIR/lib/ress" -type f -name '*.sh' -print | sort
+    find "$REPO_DIR/lib/montage" -type f -name '*.sh' -print | sort
   )
 fi
 for file in "${production_files[@]}"; do
@@ -59,7 +59,7 @@ for case_file in "$TESTS_DIR"/cases/*.sh; do
   case_files+=("$case_file")
 done
 
-results_dir=$(mktemp -d "${TMPDIR:-/tmp}/ress-results.XXXXXX")
+results_dir=$(mktemp -d "${TMPDIR:-/tmp}/mntg-results.XXXXXX")
 trap 'rm -rf "$results_dir"' EXIT
 
 run_case() {

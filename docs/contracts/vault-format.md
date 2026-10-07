@@ -1,53 +1,76 @@
-# Vault format
+# Vault repository and backup format
 
-A ress vault is an ordinary Git repository containing a versioned, portable description of one Omarchy machine. The default location is `~/.local/share/ress/vault`; `--vault DIR` selects another local vault. A remote is optional and should be private when the vault contains personal configuration or encrypted secrets.
+A Montage vault is a private Git repository for one machine lineage. Its
+stable container identity lives in `montage.json`, its current snapshot is
+described by `backup.json`, and earlier backups are immutable Git commits.
+The default path is `~/.local/share/montage/vault`; `--vault DIR` selects
+another native vault.
 
-This document describes the current schema written by ress 1.2.0. The authoritative behavior is specified by the `vault-capture`, `credential-protection`, and `schema-compatibility` OpenSpec capabilities.
+The `vault-repositories`, `vault-capture`, `credential-protection`,
+`schema-compatibility`, and `untrusted-artifact-reading` OpenSpec capabilities
+own the observable guarantees. [Repository envelope](repository-format.md)
+defines the shared container fields.
 
-## Top-level layout
+## Repository and snapshot layout
 
 ```text
-ress.json                         canonical manifest
-README.md                         generated restore hint
+montage.json                     stable vault and machine-lineage identity
+backup.json                      current snapshot metadata
+README.md                        generated recovery hint
 packages/
-  native.txt                     explicit repository packages
-  foreign.txt                    explicit foreign/AUR packages
+  native.txt
+  foreign.txt
 home/                             selected $HOME-relative configuration
 omarchy/                          portable Omarchy state
-  shell.json                     captured bar layout, when present
-  themes/                        copied local themes
-  theme-repos.tsv                remotely reconstructible themes
-  current-theme                  active theme name
-  hooks/ extensions/ branding/   captured Omarchy state, when present
-webapps/
-  apps/                           captured launcher evidence
-  icons/                          captured application icons
-plugins/
-  plugins.tsv                     plugin id, remote, enabled state, commit
-services/
-  user-units.txt                 enabled systemd user-unit names
-secrets/
-  secrets.tar.age                optional encrypted archive
-report/
-  not-captured.txt               unlisted configuration directories
-  symlinks-skipped.txt           links not followed outside the boundary
+webapps/apps/                     captured launcher evidence
+webapps/icons/                    captured icons
+plugins/plugins.tsv              plugin id, remote, enabled state, commit
+services/user-units.txt           enabled systemd user-unit names
+secrets/secrets.tar.age           optional encrypted archive
+report/not-captured.txt           visible capture omissions
+report/symlinks-skipped.txt       links not followed outside the boundary
+.git/                             backup history and Montage labels
 ```
 
-Directories can be absent or their list files empty when a category is disabled, unavailable, or has no entries. Consumers must use the manifest and tolerate empty categories rather than infer corruption from an empty list.
+A native vault cannot contain a `loadouts/` collection or root
+`profile.json`. Applied-loadout state, repository configuration, locks,
+credentials, restore progress, and private encryption identities are also not
+vault payload.
 
-## Manifest
+## Stable envelope
 
-New backups write `ress.json`. Its current shape is:
+`montage.json` has `repositoryType: "vault"`, a stable repository `id`, and a
+stable `machineId`. The ids do not change across backup commits or when the
+repository moves. Every backup's `machineId` must equal the envelope lineage;
+a crossed lineage, changed configured id, loadout envelope, malformed schema,
+or future schema is refused before preview or mutation.
 
 ```json
 {
   "schemaVersion": 1,
-  "ressVersion": "1.2.0",
-  "createdAt": "2026-10-03T12:00:00Z",
+  "kind": "montage-repository",
+  "repositoryType": "vault",
+  "id": "vault-4a63d1",
+  "createdAt": "2026-10-06T20:00:00Z",
+  "machineId": "machine-12af89"
+}
+```
+
+## Current `backup.json`
+
+Schema version 1 is an exact object:
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "montage-backup",
+  "montageVersion": "1.2.0",
+  "createdAt": "2026-10-06T20:15:00Z",
+  "machineId": "machine-12af89",
   "machine": {
     "hostname": "example",
     "user": "user",
-    "omarchyVersion": "unknown",
+    "omarchy": "unknown",
     "kernel": "..."
   },
   "categories": ["packages", "config", "omarchy", "webapps", "plugins"],
@@ -64,57 +87,96 @@ New backups write `ress.json`. Its current shape is:
 }
 ```
 
-`schemaVersion` is the compatibility gate. ress accepts it only as a plain non-negative integer of bounded length and requires the supported version before restore. It must never be evaluated as shell or arithmetic input before validation.
+Schema versions are JSON integers and must equal the supported version. The
+category set is bounded and unique; counts are non-negative integers; machine
+evidence is bounded display-safe text. Unknown keys do not grant behavior.
+Payload files and inventories remain authoritative for replay.
 
-`categories` records categories completed during capture. `counts` summarizes captured entries for status and presentation; the category payloads remain authoritative for replay.
+## Capture transaction and exclusions
 
-## Payload ownership
+Backup holds the repository lock and requires a clean worktree. It builds a
+complete candidate on the repository filesystem, captures enabled categories,
+writes and validates `backup.json`, validates every contained control and
+payload boundary, and then scans all candidate plaintext. A blocking finding
+discards the candidate without changing the live snapshot or history.
 
-Each subtree has one writer and one reconstruction path:
+Publication uses a recovery journal. An interruption before completion leaves
+the old snapshot recoverable on the next backup. A changed candidate becomes
+exactly one commit; when only `createdAt` would differ, Montage keeps the
+existing commit rather than manufacturing backup history.
 
-- `packages/` is written from explicit package databases and replayed additively.
-- `home/` is written from the curated include boundary after mandatory and user exclusions. Restore writes paths relative to `$HOME` with safe-link and replacement-backup behavior.
-- `omarchy/` is written from known Omarchy state. Repository-backed themes carry their remote and exact commit; local themes can travel as files.
-- `webapps/` preserves enough evidence to rebuild supported launchers through the Omarchy CLI. A captured `.desktop` file is not executed or blindly installed.
-- `plugins/plugins.tsv` records inventory. Only entries with safe, remotely cloneable sources and valid commits are reconstructible by default.
-- `services/user-units.txt` records enabled-state names; `.wants/` link farms are not copied. Enabling on another machine requires separate consent.
-- `secrets/secrets.tar.age` is produced only by the explicit secrets category and is never part of `home/`.
-- `report/` is evidence about omissions. It is not a restore instruction.
+Capture excludes Montage configuration, state, locks, repository trees,
+`~/.local/bin/mntg`, `.git` internals, and files ending `.montage-bak`.
+Configured repositories nested below a broad capture root are neither copied
+nor traversed for omission reporting.
 
-Tab-separated inventories are parsed as data, then validated before values reach external commands. Invalid names, paths, URLs, commits, units, or launcher fields are refused rather than interpreted.
+## Payload ownership and safety
 
-Repository remotes are recorded without URL user information. A web-app
-launcher whose URL embeds credentials is omitted and reported because stripping
-that information could change application meaning.
+- `packages/` contains validated explicit package names and is replayed
+  additively.
+- `home/` is written from the curated include boundary after mandatory and
+  user exclusions. Restore preserves replaced files with `.montage-bak`.
+- `omarchy/` carries known shell and theme state. Remote code records a
+  credential-free remote and exact commit when available.
+- `webapps/` is validated evidence for reconstruction through Omarchy; a
+  captured launcher is not blindly installed or executed.
+- `plugins/plugins.tsv` is validated inventory, not shell input.
+- `services/user-units.txt` is enabled-state evidence; enabling is a separate
+  consent decision.
+- `secrets/secrets.tar.age` is the only supported secret payload and remains
+  ciphertext. Keys and recipient configuration stay local.
+- `report/` explains omissions and never grants restore authority.
 
-## Configuration boundary
+Controls must be contained regular non-symlink files. Historical trees are
+materialized from Git objects into an isolated private directory. Unsupported
+object modes, missing controls, symlinked controls, and links escaping that
+tree are rejected. History inspection never checks out over the configured
+working tree.
 
-Ordinary configuration capture is an allowlist assembled from the shipped `defaults/include.txt` plus the user's `~/.config/ress/include`. Exclusions combine `defaults/exclude.txt` and the user's `~/.config/ress/exclude`.
+## Commit identity, labels, and retention
 
-Mandatory exclusions protect credential-shaped paths and ress replacement backups even when a user broadens the include set. Capture uses safe-link handling and a size boundary for ordinary dotfile and Omarchy content. Unknown directories and skipped unsafe links are recorded in `report/` so absence is visible on the source machine.
+The full Git commit id is the backup identity. `mntg backup list` and
+`mntg backup show COMMIT` validate each snapshot at that exact commit before
+returning human or versioned JSON metadata. Mutable refs are resolved once
+before preview; the isolated commit remains the only restore input even if a
+branch moves afterward.
 
-Autostart launchers are excluded unless `CAPTURE_AUTOSTART=1`; enabling capture is explicit because those files arrange execution at the next login.
+Montage-managed labels use bounded lowercase ids under a private Git ref
+namespace. A label is unique and resolves to one validated commit. Labels on
+backups selected for removal protect those backups until explicitly removed.
 
-## Secret-bearing paths
+`mntg backup retain --keep COUNT --dry-run` lists the exact commits that would
+leave local branch history. Confirmation is mandatory for a live rewrite.
+Retained snapshots may receive replacement commit ids because severing linear
+ancestry requires reconstructing the retained chain; retained labels are
+remapped to the equivalent commits. If an upstream exists, Montage reports
+that the rewritten local history will diverge. It never force-pushes retention
+over published history.
 
-The plaintext vault trees must not contain private keys or other mandatory credential exclusions. All captured plaintext below the vault root is scanned before commit according to `SECRET_SCAN`; Git metadata and the known `secrets/secrets.tar.age` ciphertext are excluded:
+## Restore and resume identity
 
-- `warn` identifies the affected path and finding type without recording the matched value, then permits the commit.
-- `block` refuses to commit while findings remain.
-- `off` disables the heuristic scan but does not disable mandatory path exclusions.
+Restore and verification accept `--backup COMMIT_OR_LABEL`; omitted selection
+means `HEAD`, resolved immediately to a commit. Preview, confirmation, dry run,
+verification, and category replay all name and use the same repository id and
+resolved commit.
 
-Local scan findings live under `~/.local/state/ress/`, not inside the vault. The opt-in secrets bundle is age ciphertext; selected secret paths and encryption configuration remain outside the vault.
+Live progress is private operational state at
+`~/.local/state/montage/restore.state`. Its identity line contains the vault
+repository id and exact backup commit, followed by completed categories.
+Another repository or commit starts a new completion set; dry run writes no
+progress. `--restart` explicitly discards progress for the selected backup.
 
-## Compatibility
+## Private storage and compatibility boundary
 
-`ress.json` is canonical. The supported legacy manifest name is `resurrect.json`; status and restore can read it under the same schema rules. A later successful backup writes `ress.json` and removes the obsolete manifest name.
+A vault contains personal configuration, inventories, host evidence, and
+possibly encrypted-secret ciphertext. Keep its remote private. Git credentials
+come from the user's transport, agent, or credential helper and are never
+stored in Montage configuration, output, or commits.
 
-Both `.ress-bak` and the legacy `.resurrect-bak` suffix are excluded from subsequent capture so restore leftovers do not recursively enter the vault. New replacements use `.ress-bak`.
+Ress manifests and suffixes are not native Montage controls. They are accepted
+only by the explicit Ress port adapter, which writes a separate native
+repository and leaves the source unchanged.
 
-A schema newer than the CLI supports, a non-numeric schema, or malformed JSON is refused before machine mutation. Compatibility is explicit; consumers must not guess at future fields or execute migration content from a vault.
-
-## Security assumptions
-
-A vault fetched from a remote is untrusted input even when it belongs to the user. Git transport retrieves bytes; it does not make package names, paths, launcher commands, unit names, or repository URLs safe. Manifests, inventories, lists, launchers, and the encrypted bundle must be contained regular non-symlink files. Directory replay uses contained roots and safe-link copying, so an escaping link is neither followed nor used to select a mutation target. The restore path validates these boundaries and each externally meaningful value before consent.
-
-See [Restore safety](restore-safety.md) for mutation rules and [Encrypted secrets](../workflows/encrypted-secrets.md) for the opt-in workflow.
+See [Restore safety](restore-safety.md),
+[Back up and restore](../workflows/backup-restore.md), and
+[Encrypted secrets](../workflows/encrypted-secrets.md).

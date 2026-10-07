@@ -10,7 +10,7 @@ ID=$(first_loadout_id); REGISTRY=$(registry_path)
 jq --arg id "$ID" '.operation={kind:"repair",target:$id,phase:"running",actions:[{resourceId:"package:alpha",state:"running"}]} |
   .claims[0].status="pending"' "$REGISTRY" >"$SANDBOX/interrupted.json" && mv "$SANDBOX/interrupted.json" "$REGISTRY"
 chmod 600 "$REGISTRY"
-ress loadout repair --yes "$ID"
+mntg loadout repair --yes "$ID"
 assert_ok "completed interrupted action is reconciled from evidence"
 assert_output "reconciled an interrupted repair operation"
 assert_equals "$(jq -r '.operation' "$REGISTRY")" "null" "completed recovery clears the journal"
@@ -23,7 +23,7 @@ jq --arg id "$ID" '.loadouts[0].state="removal-pending" | .claims[0].status="rem
   .operation={kind:"remove",target:$id,phase:"running",actions:[{resourceId:"package:alpha",state:"running"}]}' \
   "$REGISTRY" >"$SANDBOX/interrupted.json" && mv "$SANDBOX/interrupted.json" "$REGISTRY"
 chmod 600 "$REGISTRY"; : >"$CALLS"
-ress loadout remove --yes "$ID"
+mntg loadout remove --yes "$ID"
 assert_ok "interrupted removal resumes to completion"
 assert_output "reconciled an interrupted remove operation"
 assert_not_called "pacman -R" "completed cleanup is not repeated on resume"
@@ -42,7 +42,7 @@ jq --arg id "$ID" '.operation={kind:"remove",target:$id,phase:"running",actions:
 chmod 600 "$REGISTRY"
 mkdir -p "$HOME/.config/omarchy/plugins"
 ln -s "$SANDBOX/outside" "$HOME/.config/omarchy/plugins/alpha"
-ress loadout repair --yes "$ID"
+mntg loadout repair --yes "$ID"
 assert_ok "ambiguous interrupted evidence remains reportable"
 assert_equals "$(jq -r '.claims[0].status' "$REGISTRY")" "uncertain" "ambiguous recovery is uncertain"
 assert_equals "$(jq -r '.loadouts[0].state' "$REGISTRY")" "pending" "ambiguous recovery needs attention"

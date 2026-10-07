@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Test harness for ress.
+# Test harness for mntg.
 #
 # Every case runs against a throwaway $HOME with a PATH full of test doubles
 # (tests/bin). Nothing here touches the real machine: no package is installed,
@@ -14,14 +14,14 @@ set -uo pipefail
 
 TESTS_DIR=$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 REPO_DIR=$(dirname "$TESTS_DIR")
-RESS="$REPO_DIR/bin/ress"
+MNTG="$REPO_DIR/bin/mntg"
 
 # ---------------------------------------------------------------- sandbox
 
 # Set up a fresh $HOME, a fresh fake-machine state, and a PATH where the test
 # doubles shadow the real tools. Called once per case by run.sh.
 harness_setup() {
-  SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/ress-test.XXXXXX")
+  SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/mntg-test.XXXXXX")
   export SANDBOX
 
   export HOME="$SANDBOX/home"
@@ -54,7 +54,7 @@ harness_setup() {
   git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
   git config --file "$GIT_CONFIG_GLOBAL" commit.gpgsign false
 
-  # A sandbox Omarchy: ress reads $OMARCHY_PATH for the version file, the stock
+  # A sandbox Omarchy: mntg reads $OMARCHY_PATH for the version file, the stock
   # package lists and the built-in themes. Without this, a case would pass or
   # fail depending on which themes the developer's machine has installed.
   export OMARCHY_PATH="$SANDBOX/omarchy"
@@ -122,12 +122,12 @@ machine_aur_rpc() {
 
 machine_aur_offline() { printf 'offline' >"$FAKE_STATE/aur-rpc-offline"; }
 
-# ------------------------------------------------------------------ ress
+# ------------------------------------------------------------------ mntg
 
 # Run the CLI. Stdout+stderr land in $OUT, the exit code in $STATUS.
 # Anything on stdin is fed to the process, so a case can answer prompts.
-ress() {
-  OUT=$("$RESS" "$@" 2>&1)
+mntg() {
+  OUT=$("$MNTG" "$@" 2>&1)
   STATUS=$?
   printf '%s' "$OUT"
   return 0
@@ -136,14 +136,14 @@ ress() {
 # Same, with a canned answer sequence for interactive prompts. Each argument
 # before -- is one line of stdin.
 #
-# Run under script(1) for a pty: ress refuses to prompt without a terminal, so
+# Run under script(1) for a pty: mntg refuses to prompt without a terminal, so
 # a plain pipe would exercise the non-interactive path instead of the prompt.
 # The pty's \r is stripped so assertions can match ordinary text.
-ress_answer() {
+montage_answer() {
   local answers=()
   while (( $# > 0 )) && [[ $1 != "--" ]]; do answers+=("$1"); shift; done
   shift || true
-  local cmd; cmd=$(printf '%q ' "$RESS" "$@")
+  local cmd; cmd=$(printf '%q ' "$MNTG" "$@")
   # Written to a file rather than captured inline: PIPESTATUS is only readable
   # after a real pipeline, and $(a | b) makes the whole thing one command.
   local tmp="$SANDBOX/run.out"
@@ -156,8 +156,8 @@ ress_answer() {
 
 # A run with a terminal but no answers queued: every prompt reads EOF, which is
 # a "no". Used to prove a prompt is reached at all.
-ress_tty() {
-  local cmd; cmd=$(printf '%q ' "$RESS" "$@")
+montage_tty() {
+  local cmd; cmd=$(printf '%q ' "$MNTG" "$@")
   OUT=$(script -qe -c "$cmd" /dev/null </dev/null 2>&1 | tr -d '\r')
   STATUS=$?
   printf '%s' "$OUT"
@@ -327,16 +327,25 @@ make_vault() {
   printf '%s' "$dir"
 }
 
-# Finish a hand-built vault: write its manifest and commit, so restore accepts
-# it. Mirrors what `ress backup` would have left behind.
+# Finish a hand-built native Montage vault: write its repository envelope and
+# current backup manifest, then commit it so restore accepts the snapshot.
 seal_vault() {
   local dir="$1" host="${2:-otherbox}"
-  jq -n --arg host "$host" \
-    '{schemaVersion: 1, ressVersion: "1.1.0", createdAt: "2026-01-01T00:00:00Z",
+  local digest repository_id machine_id
+  digest=$(printf '%s' "$dir:$host" | sha256sum | cut -c1-12)
+  repository_id="vault-$digest"
+  machine_id="machine-$digest"
+  jq -n --arg id "$repository_id" --arg machine "$machine_id" \
+    '{schemaVersion: 1, kind: "montage-repository", repositoryType: "vault",
+      id: $id, createdAt: "2026-01-01T00:00:00Z", machineId: $machine}' \
+    >"$dir/montage.json"
+  jq -n --arg host "$host" --arg machine "$machine_id" \
+    '{schemaVersion: 1, kind: "montage-backup", montageVersion: "1.2.0",
+      createdAt: "2026-01-01T00:00:00Z", machineId: $machine,
       machine: {hostname: $host, user: "someone", omarchy: "4.0.0", kernel: "6.0"},
       categories: ["packages","config","omarchy","webapps","plugins"],
       counts: {packages: 0, config: 0, themes: 0, webapps: 0, plugins: 0, secrets: 0, uncaptured: 0, services: 0}}' \
-    >"$dir/ress.json"
+    >"$dir/backup.json"
   git -C "$dir" add -A
   git -C "$dir" commit -q -m "vault"
 }

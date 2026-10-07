@@ -1,170 +1,164 @@
 # Share and apply a loadout
 
-A loadout shares supported setup choices without sharing a home directory. Its fixed format contains packages, pinned plugins, reconstructible web apps, and a theme. Read [Loadout profile](../contracts/loadout-profile.md) for the exact schema and validation rules.
+A Montage loadout repository is a user-owned Git library. Each
+`loadouts/<stable-id>/profile.json` is portable authored content. Applying one
+creates separate private desired state on the current machine; it does not turn
+the library into a cleanup registry. Read [Loadout profile](../contracts/loadout-profile.md)
+and [Applied-loadout registry](../contracts/loadout-registry.md) for the exact
+boundaries.
 
-## Export a loadout
-
-From the machine whose setup you want to share:
-
-```bash
-ress share --name "My Omarchy setup" --description "Tools and integrations I use"
-```
-
-The default output is `~/.local/share/ress/profile`. Choose another directory when needed:
+## Create and configure a library
 
 ```bash
-ress share --out /tmp/my-loadout
+mntg repository init loadouts "$HOME/.local/share/montage/loadouts" --id personal-loadouts
+mntg repository configure personal "$HOME/.local/share/montage/loadouts" loadouts \
+  --remote https://github.com/example/personal-loadouts
+mntg repository list
 ```
 
-The panel Share tab begins with an explicit choice: all shareable resources,
-the valid current export, an empty selection, or one applied loadout. Choosing
-all is the short path. The composer then lets you edit the name and description,
-search packages, plugins, web apps, and themes, add further applied loadouts,
-and toggle individual resources. A loadout can contain only one theme.
+The configured name `personal` is local convenience. `personal-loadouts` is
+the stable repository identity stored in `montage.json`. Neither is a display
+name for an individual loadout.
 
-Applied loadouts are starting selections, not authored copies: only healthy
-current resources whose definitions still match are added. Warnings name
-missing, changed, or conflicting entries. Adding another preset unions eligible
-resources; if it asks for another theme, your existing theme remains selected
-until you choose explicitly.
+## Share one selected item
 
-The equivalent CLI workflow starts by inspecting the catalog:
+Capture all representable resources into a stable item:
 
 ```bash
-ress share catalog --json
-ress share --custom --name "Small setup" \
-  --description "Tools for a lightweight machine" \
-  --select package:fd --select webapp:Draw --select theme-install:nord
+mntg share --repository personal --loadout workstation \
+  --name "My workstation" --description "Daily tools and integrations"
 ```
 
-An empty custom selection is refused. If a resource from the current export is
-no longer shareable, the panel keeps it visible and asks you to acknowledge its
-withdrawal. Direct CLI callers repeat the exact id and fingerprint returned by
-the catalog with `--acknowledge-unavailable ID FINGERPRINT`. The CLI reinspects
-the machine after you activate export, so stale selections or acknowledgements
-fail without changing the current profile; refresh and review the composer.
-
-Read the output warnings. A web app whose launcher form cannot be represented,
-or whose URL embeds credentials, is left out rather than weakened into a
-misleading entry. Plugins and cloneable themes need a safe remote and exact
-commit to travel under the default pinning policy; any URL user information is
-removed before export.
-
-Inspect `profile.json` before publishing. It should contain no dotfiles, keys, arbitrary files, or command field.
-
-## Publish
-
-The export is a Git repository. Add a public remote and push it using your normal Git credentials:
+Or inspect the catalog and compose a non-empty subset:
 
 ```bash
-cd ~/.local/share/ress/profile
-git remote add origin git@github.com:you/my-omarchy-loadout.git
-git push -u origin main
+mntg share catalog --json --repository personal --loadout minimal
+mntg share --custom --repository personal --loadout minimal \
+  --name "Small setup" \
+  --select package:fd \
+  --select webapp:Draw \
+  --select theme-install:nord
 ```
 
-Share either the repository URL or the shorthand:
-
-```text
-https://github.com/you/my-omarchy-loadout
-ress.sh/gh/you/my-omarchy-loadout
-```
-
-The shorthand is expanded to GitHub locally before any request. ress.sh does not store or proxy the profile.
-
-## Preview another loadout
-
-Always begin with a dry run:
+The CLI reinspects selections before publication. More than one theme, unknown
+or stale identities, malformed current content, and unsafe URLs are refused
+without changing the selected item, its siblings, the index, or history. When
+a previously selected resource becomes unavailable, use only the exact id and
+fingerprint returned by the refreshed catalog:
 
 ```bash
-ress apply ress.sh/gh/someone/their-loadout --dry-run
+mntg share --custom --repository personal --loadout minimal \
+  --select package:fd \
+  --acknowledge-unavailable plugin:old <catalog-fingerprint>
 ```
 
-The preview identifies the profile and lists missing repository packages, AUR packages, plugins, web apps, and the theme action. It also states what apply cannot do: remove items, touch dotfiles, run profile scripts, or read arbitrary home content.
-
-An invalid kind, schema, package name, identifier, URL, or commit is refused or omitted before action.
-
-## Apply
-
-Run the same source without `--dry-run`:
+Review the resulting item and commit before publishing:
 
 ```bash
-ress apply ress.sh/gh/someone/their-loadout
+mntg repository loadouts personal
+mntg repository loadout show personal workstation
+git -C "$HOME/.local/share/montage/loadouts" show --stat HEAD
+mntg repository sync personal
+mntg repository sync personal --push
 ```
 
-Apply asks for general confirmation. AUR packages are a separate decision because they build fetched PKGBUILDs:
+Generated instructions use a canonical credential-free URL and always include
+the stable selector. Montage does not generate or resolve Ress short links.
+See [Synchronize repositories](repository-sync.md) for transport credentials,
+divergence, and the no-force guarantee.
+
+## Preview and apply a library item
+
+Always preview the exact selection first:
 
 ```bash
-ress apply ress.sh/gh/someone/their-loadout --yes --aur
+mntg apply https://github.com/example/personal-loadouts \
+  --loadout workstation --dry-run
 ```
 
-Use `--review-aur` to retain the AUR helper's review flow or `--no-aur` to leave those packages unbuilt.
+The preview lists installation, protection, sharing, conflict, refusal, and
+theme actions. It cannot touch dotfiles, execute a profile script, remove
+unrelated state, or read arbitrary home content.
 
-Pinned plugins and Git themes are checked out at the recorded commit. Entries without a commit are skipped by default. `--allow-unpinned` is an explicit exception that accepts a repository branch head; use it only after reviewing that additional trust decision.
-
-A confirmed loadout receives a readable local id and remains visible even when some work is declined or fails. Successful no-op application is tracked too: resources that already existed are protected rather than adopted for future cleanup. Deferred AUR work, missing integrations, and conflicts produce a partial outcome instead of a false success.
-
-## Inspect applied loadouts and resources
+Apply the same repository and selector:
 
 ```bash
-ress loadout list
-ress loadout list --json --contents
-ress loadout show LOCAL_ID --contents
-ress resource show package:ripgrep
+mntg apply https://github.com/example/personal-loadouts --loadout workstation
 ```
 
-The resource view answers whether the resource pre-existed tracking or was introduced by ress, its cleanup policy and recorded evidence, and every loadout that currently claims it. The normalized profile snapshot remains available offline even if its source disappears.
-
-Check live machine health without changing anything:
+The repository is resolved to one commit before preview; confirmation applies
+that validated snapshot even if a mutable branch later moves. AUR packages
+remain a separate decision:
 
 ```bash
-ress loadout check
-ress loadout check LOCAL_ID --json
+mntg apply https://github.com/example/personal-loadouts \
+  --loadout workstation --yes --aur
 ```
 
-Missing, modified, conflicting, or unverifiable resources make check return non-zero. Status refresh and checking never reinstall them automatically.
+Use `--review-aur` for the helper review flow or `--no-aur` to defer builds.
+Pinned plugins and Git themes use the commit in the profile. Unpinned fetched
+code is skipped unless `--allow-unpinned` is explicitly supplied.
 
-## Repair drift
-
-Repair is explicit and previewed:
+A contained standalone profile remains portable:
 
 ```bash
-ress loadout repair LOCAL_ID --dry-run
-ress loadout repair LOCAL_ID
+mntg apply /path/to/profile.json --dry-run
 ```
 
-Repair uses the apply validators and pinning rules but only targets missing, safely restorable claims. AUR builds still need their independent `--aur`, `--review-aur`, or configured decision; `--yes` alone does not authorize them. Declined work remains pending for another repair.
+It has no repository id, stable item id, or commit provenance.
 
-## Re-export and update
-
-Run `ress share` again for a whole-machine refresh, or open the panel's current
-export starting choice to preserve and edit its selection. Either path updates
-the same single profile repository; ress does not yet maintain a library of
-authored loadouts. Review the diff before pushing:
+## Inspect machine-local applied state
 
 ```bash
-git -C ~/.local/share/ress/profile diff HEAD~1
-git -C ~/.local/share/ress/profile push
+mntg loadout list
+mntg loadout list --json --contents
+mntg loadout show LOCAL_ID --contents
+mntg resource show package:ripgrep
+mntg loadout check LOCAL_ID --json
 ```
 
-Applying a loadout does not poll or continuously synchronize its source. An exact reapply reconciles the existing local identity. If content at a known source changes, ordinary apply refuses replacement; update it explicitly:
+These commands read the private registry under the Montage state root, not the
+loadout library. For repository sources, show includes repository id, stable
+item id, resolved commit, digest, and stored normalized snapshot without
+refetching. Resource queries distinguish pre-existing protected resources from
+ones introduced by Montage and list current claimants. Read-only checks never
+repair or rewrite state.
+
+## Update and repair
+
+Repair addresses drift against the stored snapshot:
 
 ```bash
-ress loadout update LOCAL_ID --dry-run
-ress loadout update LOCAL_ID
-ress loadout update LOCAL_ID https://github.com/you/alternate-source
+mntg loadout repair LOCAL_ID --dry-run
+mntg loadout repair LOCAL_ID
 ```
 
-The preview distinguishes retained, added, conflicting, and withdrawn claims. Withdrawn claims use the same retention/removal rules as loadout removal, so omission from a remote profile never becomes an unseen deletion.
+It targets only missing safely restorable claims and preserves original cleanup
+policy. AUR consent remains separate.
 
-## Remove an applied loadout
-
-The user-facing inverse of apply is **remove loadout** (not “unapply”):
+If the same repository item resolves to changed profile content, ordinary
+apply refuses silent replacement. Update is explicit:
 
 ```bash
-ress loadout remove LOCAL_ID --dry-run
-ress loadout remove LOCAL_ID
+mntg loadout update LOCAL_ID --dry-run
+mntg loadout update LOCAL_ID
 ```
 
-The preview explains which exclusive ress-introduced resources can be deleted, which shared claims are merely released, which pre-existing resources stay, which are already absent, and which changes need a decision. For an externally changed exclusive resource, rerun with `--keep-modified` to leave it unmanaged or `--remove-modified` after reviewing the displayed evidence.
+Update re-resolves the same repository and stable item identity, then previews
+retained, added, conflicting, and withdrawn claims. Supplying another source is
+allowed only when it validates to those same immutable identities. Withdrawals
+use the removal preservation planner.
 
-Removal does not delete application data, arbitrary configuration, dependencies, or unrelated state. Package dependency refusal and cleanup failure leave the loadout removal-pending so the same command can resume it. Theme removal first selects the newest remaining requested theme or the original baseline; a manual external theme choice is preserved.
+## Remove applied state
+
+```bash
+mntg loadout remove LOCAL_ID --dry-run
+mntg loadout remove LOCAL_ID
+```
+
+Removal releases shared claims, retains pre-existing resources, and deletes an
+exclusive Montage-introduced resource only when current evidence still matches.
+Changed or unverifiable resources require an explicit keep/remove decision.
+Dependency refusal or cleanup failure leaves the operation resumable. Removing
+applied state never deletes the authored library item or its Git history, and
+removing a library configuration never removes applied state.

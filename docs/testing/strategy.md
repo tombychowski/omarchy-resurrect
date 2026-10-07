@@ -1,263 +1,107 @@
 # Testing strategy
 
-Five layers, in the order they catch things. The suite, mutation runner, and
-static/model QML checks are automated. Scratch-directory integration needs a
-real Omarchy machine, and the final layer needs a clean Omarchy VM. The six
-original restore boundaries and the applied-loadout cleanup boundaries below
-remain manual evidence.
+Montage uses four evidence layers. A claim belongs to the lowest layer that can
+actually prove it; simulated success is not promoted to real-machine evidence.
 
-## 1. The suite
+## 1. Sandboxed automated suite
 
 ```bash
-./tests/run.sh              # every case
-./tests/run.sh aur          # just the ones whose name matches
-./tests/run.sh --jobs 4     # bounded parallel cases, reported in case order
-./tests/run.sh --jobs 1     # explicit sequential compatibility mode
+./tests/run.sh
+./tests/run.sh repository
+./tests/run.sh --jobs 4
 ```
 
-The 2026-10-05 internal-cleanup evidence passed **47 cases and 1,137
-assertions** in both modes: 382 seconds with `--jobs 1` and 221 seconds with
-`--jobs 4` on the development machine. Treat counts as compatibility evidence
-and durations as feedback data, not targets to preserve by weakening assertions
-or correctness thresholds; current runner output remains authoritative.
+Every case gets a throwaway home and test doubles for package, privilege,
+service, Git/network, and Omarchy boundaries. Before cases run, the harness
+syntax-checks `bin/mntg` and every `lib/montage/**/*.sh` module. The suite proves
+validation order, path containment, credential omission, locking, atomic
+publication, rollback/recovery, JSON and porcelain contracts, stable identity,
+repository history behavior, no-op behavior, and exact external command
+arguments without changing the developer's machine.
 
-Each case runs in a throwaway `$HOME` with test doubles on `PATH` for `pacman`,
-`yay`, `sudo`, `systemctl`, `curl`, `git` and the `omarchy` CLI. Nothing outside
-the sandbox is read or written: no package is installed, no unit is enabled, and
-the fake `sudo` has no privileges — it records the call and runs the rest of the
-line as you. That is what lets a case assert a restore *did not* do something,
-which is most of what the consent work is about.
+Important focused groups include:
 
-The `git` double is the subtle one: it rewrites `https://github.com/example/…`
-to a local path, but only for `clone`, `fetch`, `pull`, `push` and `ls-remote`.
-Rewriting globally would make capture record a `/tmp` path and restore then
-refuse it as an unsafe remote — an artefact of the test rather than of ress.
+- repository envelopes, registry serialization, transactions, loadout
+  libraries, backup history, retention, and sync (`48`–`58`);
+- frozen Ress v1 fixtures, inspection, current/history import, export, and loss
+  safety (`59`–`65`);
+- final command routing and aliases (`66`);
+- format-neutral port dispatch, shared report identity, unsupported-format and
+  unsupported-callback refusal, one literal callback matrix, adapter isolation,
+  forbidden lifecycle calls in adapters, and a shared-engine-versus-adapter
+  size guard (`67`);
+- QML/Model consumer boundaries (`16`); and
+- active source, documentation, manifest, and ownership structure (`47`).
 
-Before any case runs, `tests/run.sh` syntax-checks the complete production Bash
-inventory: the public `bin/ress` entrypoint and every `.sh` file present below
-`lib/ress/`. The directory is conditional so this gate also works while a
-single-file checkout is being migrated, but once modules exist a parse error in
-any one names that exact repository-relative file and stops the run. Cases still
-invoke only `bin/ress`; sourced modules are implementation, not extra command
-surfaces.
+Network authentication, real package transactions, GitHub visibility, rendered
+QML, and a clean machine are outside this layer.
 
-Every case line includes elapsed duration for feedback and comparison only;
-wall-clock time is never a pass/fail threshold. Parallel workers retain
-discovery/report order, and each case keeps its own `mktemp` home, fake machine,
-call log, and output. Sequential and bounded-parallel full runs must report the
-same case and assertion totals.
-
-`tests/check-structure.sh` checks the reviewed module-dependency map and
-dynamic-entrypoint allowlist, rejects duplicate/proven-unreachable functions,
-and catches selected reverse ownership edges. Its fixture adds an unreachable
-function and a machine-to-registry dependency to prove the gate is live. This
-is a conservative textual Bash check: dynamic dispatch is explicitly
-allowlisted, and the result is architecture evidence rather than a full shell
-call graph.
-
-The loadout scale fixture compares 10- and 50-resource human, porcelain and
-JSON results with deterministic command counts. A stable phase gets one package
-inventory, one active-theme observation and one registry-index build; jq growth
-is checked without making timing a correctness condition. Mutation-sensitive
-guards still reread live state.
-
-ShellCheck, `shfmt`, and `bashtate` are not installed in the current repository
-environment, and tests do not download development tools. No reproducible
-lint/format gate is therefore claimed here. The deterministic local gates are
-`bash -n` over all production Bash, the structure checker, focused/full cases,
-and mutation testing. A CI image may add pinned tool versions later; local tool
-availability alone is not behavioral proof.
-
-The lock cases use overlapping sandboxed processes rather than sequential file
-checks. They prove that a live operation's opaque running marker survives
-unrelated CLI exits, that dry-run locking has no visible marker, that a replaced
-marker is not removed by an old owner, and that a configuration-lock timeout
-leaves the config byte-for-byte unchanged. A separate queued-writer assertion
-proves successful setting updates reread and serialize under the same lock.
-Those CLI ownership guarantees are fully sandbox-automated. Whether the
-rendered panel visibly changes to and from its external-busy presentation
-remains part of the real-machine/QML boundary below.
-
-Credential and hostile-artifact cases use literal secret markers and symlinked
-control files inside the throwaway home. They assert the marker is absent from
-combined output and persisted config/vault/profile/registry state; they also
-prove manifest/profile/inventory refusal precedes the running marker and
-external mutation. Nested directory-link behavior is exercised with real
-`rsync --safe-links` against sandbox paths. Network authentication services
-and rendered omission notices remain outside this automated boundary.
-
-## 2. Mutation testing
+## 2. Mutation and structural evidence
 
 ```bash
-./tests/mutate.sh           # full clean baseline, then one detector per mutation
+./tests/mutate.sh
+./tests/check-structure.sh .
+openspec validate --all --strict
 ```
 
-A passing suite says the tests agree with the code, not that they would notice
-if the code were wrong. This breaks one behaviour at a time in a throwaway copy
-— the AUR gate always builds, the unit gate always enables, the scanner never
-finds anything, `verify` always says the machine matches, `plain()` stops
-stripping control characters — and reports any mutation no test caught.
+Mutation testing starts from a clean full-suite baseline and runs one mapped
+detector for each intentional behavior break. A surviving mutation means the
+suite does not prove the behavior it appears to cover.
 
-Run it when you change what the tests are *for*, not on every edit. A `SURVIVED`
-line is a feature the suite only appears to cover. The runner first executes the
-complete suite once, then runs one explicitly mapped detector case against each
-mutation. Repeating unrelated integration cases for every mutation adds no
-mutation evidence: a mutation is caught when its designated case goes red.
+The structure check verifies module reachability and dependency direction,
+authoritative entrypoints, native naming, documentation links, consumer
+boundaries, and that port adapters do not own Git traversal, native repository
+transactions, staging, confirmation, publication, or result projection.
+The port cases also prove that recognized manifest-only inputs cannot acquire
+an executable mutation plan and that JSON decision refusals stay inside one
+parseable `montage-port-report`.
+OpenSpec validation proves artifact structure and cross-reference integrity; it
+does not prove runtime behavior.
 
-It runs the suite once before breaking anything, and refuses to report on
-mutations when that baseline does not pass: a case that is already red counts as
-a catch for every mutation, so a run on a red suite is a clean sweep over tests
-that are not passing. `tests/cases/20-mutation-baseline.sh` covers both halves of
-that gate. Its baseline filter is accepted only with the sentinel filter that
-selects no mutations; a real full or name-filtered mutation run cannot narrow
-the clean baseline.
+## 3. Real tools on disposable paths
 
-Every mutation names its repository-relative production file explicitly. The
-runner refuses a missing target and an anchor that is absent or appears more
-than once, then syntax-checks `bin/ress` and all `lib/ress/**/*.sh` files in the
-mutated copy before running the mapped detector. `MUTATION_CASE` in
-`tests/mutate.sh` makes detector ownership explicit and treats a missing mapping
-or case as skipped evidence, which fails the sweep. When a function moves
-between modules, moving its mutation target is part of the same refactor;
-leaving the mutation pointed at the old monolith must fail rather than quietly
-reduce coverage. A focused mutation can be selected by name, for example:
+Use a real Omarchy installation, disposable native repositories, a temporary
+home, and private or local remotes. Never use a valued vault or loadout library.
 
-```bash
-./tests/mutate.sh share-hides-unshareable
-```
+This layer validates:
 
-Splitting the CLI into sourced files does not change what these automated
-layers can prove. Test doubles still model package, service, network, Git, and
-Omarchy command boundaries; real side effects and rendered desktop behavior
-remain the responsibility of the scratch-machine and VM layers below.
+- real Git commits, first-parent history, labels, fast-forward fetch/pull/push,
+  and divergence classification;
+- Git credential helper or SSH-agent authentication without URL userinfo;
+- private GitHub visibility checks for vaults;
+- real `rsync`, `age`, package query, and Omarchy inspection behavior;
+- source/destination byte preservation across Ress ports; and
+- plugin manifest validation and update/remove behavior on a disposable copy.
 
-## 3. The QML half
+Record commands, versions, repository visibility, expected observation, actual
+observation, and cleanup. A failed or skipped observation remains open evidence.
 
-`tests/cases/16-qml.sh` covers what the bash suite cannot:
+## 4. Clean Omarchy machine or VM
 
-- **`Model.js`** is a `.pragma library` — plain JavaScript with no QML API in it
-  — so `tests/model-test.js` runs it under node and asserts on it directly.
-- **`qmllint`** with the Omarchy and Quickshell imports resolved. Without the
-  import paths it emits forty lines of unresolved-import noise and tells you
-  nothing; with them, it is a real check.
-- **A cross-file check qmllint cannot do.** The panel reaches the engine through
-  a dynamically typed property, so a binding to an engine member that does not
-  exist renders blank and reports nothing anywhere. Every `engine.<member>` in
-  `Panel.qml` is checked against `Service.qml`.
+The [fresh-machine checklist](fresh-machine-validation.md) is required for:
 
-None of this proves the panel *draws*. See §4.
+- side-by-side Ress and Montage installation and independent removal;
+- `mntg`, Ress `ress`, and ImageMagick `montage` command coexistence;
+- rendered four-tab panel layout, scrolling, pointer use, and keyboard focus;
+- actual native/AUR installation and consent;
+- service startup and visible theme effects;
+- real private GitHub synchronization and divergent-history presentation;
+- exact historical restore from a selected full commit; and
+- end-to-end Ress import/export acceptance on disposable copies.
 
-## 4. On a real machine, without a VM
+QML lint proves parsing and type resolution, not drawing. Command doubles prove
+requested mutations, not that pacman, yay, systemd, GitHub, or Omarchy performed
+their real side effects.
 
-These use the real tools against scratch directories, and are worth running
-before a release. None of them touches the live desktop or the real vault.
+## Evidence recording rules
 
-```bash
-# A real capture of this machine into a scratch vault, then the round-trip
-# invariant: a vault captured from a machine must verify against that machine.
-ress backup  --vault /tmp/rt-vault -m "round trip"
-ress verify  --vault /tmp/rt-vault      # expect: matches, exit 0
-ress scan    --vault /tmp/rt-vault
-
-# A real restore into a scratch home. Three commands must not reach the running
-# session, so shadow them: a shell restart, the IPC client that edits the live
-# bar layout, and the live theme switcher.
-mkdir -p /tmp/rt-bin
-printf '#!/bin/sh\nexit 0\n' > /tmp/rt-bin/omarchy-restart-shell
-printf '#!/bin/sh\nexit 1\n' > /tmp/rt-bin/omarchy-shell
-printf '#!/bin/sh\nexit 0\n' > /tmp/rt-bin/omarchy-theme-set
-chmod +x /tmp/rt-bin/*
-
-env -i HOME=/tmp/rt-home PATH="/tmp/rt-bin:$PATH" TERM=dumb USER="$USER" \
-  ress restore --from /tmp/rt-vault --yes --no-enable-units --skip packages
-```
-
-`--skip packages` because installing them for real needs root, and
-`--no-enable-units` because `systemctl --user` talks to the session manager
-rather than to `$HOME` — enabling a unit for a scratch home would enable it in
-your real session.
-
-Then check the upgrade path on a copy of a vault written by the previous
-version, and the update mechanism on a copy of the installed plugin:
-
-```bash
-cp -a ~/.local/share/ress/vault /tmp/upgrade-vault
-git -C /tmp/upgrade-vault remote remove origin      # so nothing can be pushed
-ress backup --vault /tmp/upgrade-vault              # expect the manifest rename
-
-cp -a ~/.config/omarchy/plugins/tsouth89.resurrect /tmp/plugin-update
-git -C /tmp/plugin-update fetch origin HEAD
-git -C /tmp/plugin-update merge --ff-only FETCH_HEAD
-omarchy-plugin-validate /tmp/plugin-update
-```
-
-The AUR annotation is the one integration the doubles cannot stand in for,
-because it is a live HTTP API and the encoding is fiddly (`arg%5B%5D=`, `curl
--g`, and `+` encoded as `%2B` or the AUR reads it as a space). Give a scratch
-vault a `packages/foreign.txt` with one real AUR name and one invented one, and
-answer `n` at the prompt: the invented one should be marked *not on
-aur.archlinux.org*.
-
-Applied-loadout command-boundary cases use the same scratch machine model to
-prove registry validation/atomicity, claims, conflict planning, drift, repair,
-direct package arguments, preservation decisions, Omarchy delegation, theme
-precedence, and panel parsing. Before release, additionally exercise a scratch
-registry with real tools: confirm mode `0600`, make a package-removal target
-that pacman refuses for dependencies, remove a disposable plugin/web app/theme
-through Omarchy, and verify an active-theme fallback. Do not use the live vault
-or a valued package/integration for these checks.
-
-The reproducible form is:
-
-```bash
-tests/manual/loadout-real-scratch.sh
-```
-
-It redirects all mutable user state to a `mktemp` home, uses pacman's read-only
-removal planner for the dependency refusal, exercises real disposable Omarchy
-cleanup targets, and runs real theme selection in Omarchy's headless mode. The
-2026-10-04 run passed on Omarchy `4.0.0.alpha` with pacman `7.1.0`; its full
-observations and limitations are recorded in the active change's
-`evidence.md`. It does not authorize or perform a successful root package
-removal and does not prove visible rendering.
-
-## 5. What only a VM can tell you
-
-Everything above leaves six things unproven. All of them need a clean Omarchy
-install, which [Fresh-machine validation](fresh-machine-validation.md) walks
-through.
-
-1. **Installing packages.** `sudo pacman -S` and `yay` building real PKGBUILDs
-   have never run under test — the doubles record the call and stop. This is the
-   single biggest gap, and it is the category most likely to be slow or to fail
-   halfway.
-2. **A machine that genuinely lacks things.** A scratch `$HOME` on your own
-   machine still has every package installed system-wide, so "restore installs
-   what is missing" is only ever exercised against a machine where nothing is.
-3. **The panel drawing.** `qmllint` proves the QML parses and resolves; it does
-   not prove the bar widget appears, that the two consent rows render, or that
-   clicking one writes the setting.
-4. **Units actually starting.** Enabling is tested; a unit coming up with the
-   session at next login is not.
-5. **The theme actually applying.** `omarchy-theme-set` is shadowed in every
-   test above, so the desktop visibly changing is unverified.
-6. **The timing claim.** The README's restore number can only come from a real
-   run on a fresh install.
-7. **Real package removal transactions.** The double proves exact safe flags,
-   dependency refusal, and resume logic; only pacman proves its real dependency
-   diagnosis and post-removal database state.
-8. **Real Omarchy cleanup side effects.** Plugin unload/rescan, launcher/icon
-   cleanup, and theme removal are delegated to Omarchy and must be observed.
-9. **Theme effect rendering.** Tests prove precedence commands; a VM proves the
-   fallback is visibly usable and an external selection remains undisturbed.
-10. **The Loadouts panel drawing.** Model tests and qmllint do not prove row
-    density, focus order, selection detail, or terminal handoff on the desktop.
-
-The 2026-10-04 Proxmox run recorded the exact status of these boundaries in
-[Fresh-machine validation](fresh-machine-validation.md). It closed the native
-package install and direct-removal, genuine-absence, Loadouts panel, and real
-Omarchy cleanup gaps for the disposable fixtures. It also observed real theme
-state precedence, fallback, baseline restoration, external override
-preservation, and the two fallback transitions on a rendered desktop. It did
-**not** exercise an AUR build, unit startup, encrypted secrets, or a timed
-full-vault restore; those remain manual release evidence.
+- Never convert an unexecuted checklist into a pass statement.
+- Name the exact commit, environment, date, and tool versions.
+- Separate automated, disposable-real-tool, clean-machine, and screenshot
+  evidence.
+- Preserve historical logs as historical; do not present Ress-era evidence as
+  current Montage release evidence.
+- A screenshot supports layout and wording only. Pair it with CLI/test evidence
+  for state semantics.
+- Before release, run the full suite and strict OpenSpec validation after the
+  last code or documentation change.

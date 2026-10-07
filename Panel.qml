@@ -9,11 +9,11 @@ import "Model.js" as Model
 
 // One bar icon and one panel: how fresh the backup is, what it holds, and the
 // two buttons that matter. Everything here is a thin face over
-// bin/ress — the panel never touches the filesystem itself.
+// bin/mntg — the panel never touches the filesystem itself.
 Panel {
   id: root
-  moduleName: "tsouth89.resurrect"
-  ipcTarget: "tsouth89.resurrect"
+  moduleName: "tombychowski.montage"
+  ipcTarget: "tombychowski.montage"
   manageIpc: false
 
   // ------------------------------------------------------------------ theme
@@ -32,13 +32,21 @@ Panel {
   property string tab: "backup"
   property int cursor: 0
   property bool cursorActive: false
-  property string applyUrl: ""
   property string selectedLoadoutId: ""
+  property string selectedBackupCommit: ""
+  property string repositorySettingName: "personal"
+  property string repositorySettingPath: engine.home + "/.local/share/montage/loadouts"
+  property string repositorySettingType: "loadouts"
+  property string repositorySettingRemote: ""
+  property string portSource: ""
+  property string portDestination: engine.home + "/.local/share/montage/imported"
+  property string portLoadoutId: "imported-ress"
+  property string retentionKeep: "10"
   property string notice: ""
   property string shareStage: "choose"
   property var shareSelection: ({})
   property var shareAcknowledgements: ({})
-  property string shareName: "My ress loadout"
+  property string shareName: "My Montage loadout"
   property string shareDescription: ""
   property string shareCategory: "package"
   property string shareSearch: ""
@@ -48,8 +56,51 @@ Panel {
     : engine.busy && engine.busyAction === "share" ? "exporting"
     : shareStage
 
-  readonly property var tabs: ["backup", "share", "loadouts"]
+  readonly property var tabs: ["backup", "repositories", "share", "loadouts"]
   readonly property var rows: {
+    if (tab === "repositories") {
+      var repositoryRows = []
+      var configured = engine.repositories ? engine.repositories.repositories : []
+      for (var c = 0; c < configured.length; c++)
+        repositoryRows.push({ id: "repository:" + configured[c].name, label: configured[c].name })
+      if (engine.selectedRepositoryName !== "") {
+        repositoryRows.push({ id: "sync-preview", label: "Check synchronization" })
+        if (engine.syncPreview)
+          repositoryRows.push({ id: "sync-review", label: "Review synchronization in terminal" })
+        if (engine.selectedRepositoryType === "loadouts") {
+          var library = engine.repositoryLoadouts ? engine.repositoryLoadouts.items : []
+          for (var ri = 0; ri < library.length; ri++)
+            repositoryRows.push({ id: "repository-loadout:" + library[ri].id, label: library[ri].name })
+          if (engine.selectedRepositoryLoadoutId !== "") {
+            repositoryRows.push({ id: "repository-loadout-compose", label: "Compose selected loadout" })
+            repositoryRows.push({ id: "repository-loadout-preview", label: "Preview selected loadout" })
+            repositoryRows.push({ id: "repository-loadout-apply", label: "Apply selected loadout" })
+          }
+        } else if (engine.selectedRepositoryType === "vault") {
+          var history = engine.backupHistory ? engine.backupHistory.backups : []
+          for (var bi = 0; bi < history.length; bi++)
+            repositoryRows.push({ id: "repository-backup:" + history[bi].commit, label: history[bi].createdAt })
+          if (selectedBackupCommit !== "")
+            repositoryRows.push({ id: "repository-backup-restore", label: "Restore selected backup" })
+          repositoryRows.push({ id: "retention-keep", label: "Backups to keep" })
+          repositoryRows.push({ id: "retention-preview", label: "Preview retention" })
+          if (engine.retentionPreview && engine.retentionPreview.changed && !engine.retentionPreview.blocked)
+            repositoryRows.push({ id: "retention-apply", label: "Run retention in terminal" })
+        }
+      }
+      repositoryRows.push({ id: "repository-setting-name", label: "Repository name" })
+      repositoryRows.push({ id: "repository-setting-path", label: "Repository location" })
+      repositoryRows.push({ id: "repository-setting-type", label: "Repository type" })
+      repositoryRows.push({ id: "repository-setting-remote", label: "Repository remote" })
+      repositoryRows.push({ id: "repository-setting-save", label: "Save repository settings" })
+      repositoryRows.push({ id: "port-source", label: "Ress port source" })
+      repositoryRows.push({ id: "port-destination", label: "Montage port destination" })
+      repositoryRows.push({ id: "port-loadout-id", label: "Imported loadout id" })
+      repositoryRows.push({ id: "port-preview", label: "Preview Ress port" })
+      if (engine.portPreview && engine.portPreview.compatible)
+        repositoryRows.push({ id: "port-publish", label: "Publish Ress port in terminal" })
+      return repositoryRows
+    }
     if (tab === "share") {
       var shareRows = []
       if (shareStage === "choose") {
@@ -81,15 +132,11 @@ Panel {
         shareRows.push({ id: "share-back", label: "Choose another start" })
       }
       shareRows.push({ id: "copy", label: "Copy the share command" })
-      shareRows.push({ id: "folder", label: "Open the profile folder" })
+      shareRows.push({ id: "folder", label: "Open the repository folder" })
       return shareRows
     }
     if (tab === "loadouts") {
-      var loadoutRows = [
-        { id: "url", label: "Profile URL" },
-        { id: "preview", label: "Preview what it installs" },
-        { id: "apply", label: "Apply another loadout" }
-      ]
+      var loadoutRows = []
       var applied = engine.loadouts || []
       for (var l = 0; l < applied.length; l++)
         loadoutRows.push({ id: "loadout:" + applied[l].id, label: applied[l].name })
@@ -120,6 +167,33 @@ Panel {
       if (applied[i].id === selectedLoadoutId) return applied[i]
     return null
   }
+
+  function selectedRepository() {
+    var configured = engine.repositories ? engine.repositories.repositories : []
+    for (var i = 0; i < configured.length; i++)
+      if (configured[i].name === engine.selectedRepositoryName) return configured[i]
+    return null
+  }
+
+  function selectedRepositoryLoadout() {
+    var items = engine.repositoryLoadouts ? engine.repositoryLoadouts.items : []
+    for (var i = 0; i < items.length; i++)
+      if (items[i].id === engine.selectedRepositoryLoadoutId) return items[i]
+    return null
+  }
+
+  function selectedBackup() {
+    var backups = engine.backupHistory ? engine.backupHistory.backups : []
+    for (var i = 0; i < backups.length; i++)
+      if (backups[i].commit === selectedBackupCommit) return backups[i]
+    return null
+  }
+
+  readonly property string repositoryViewState: Model.repositoryPanelState(
+    engine.loadingRepositories || engine.loadingRepositoryContent,
+    engine.repositories, selectedRepository(),
+    engine.selectedRepositoryType === "loadouts" ? engine.repositoryLoadouts : engine.backupHistory,
+    engine.syncPreview)
 
   function setTab(name) {
     tab = name
@@ -206,6 +280,28 @@ Panel {
       selectedLoadoutId = id.substring(8)
       return
     }
+    if (id.indexOf("repository:") === 0) {
+      var repositoryName = id.substring(11)
+      var repositories = engine.repositories ? engine.repositories.repositories : []
+      for (var rp = 0; rp < repositories.length; rp++) {
+        if (repositories[rp].name === repositoryName) {
+          selectedBackupCommit = ""
+          engine.syncPreview = null
+          engine.selectRepository(repositories[rp].name, repositories[rp].type,
+                                  repositories[rp].path, repositories[rp].id)
+          return
+        }
+      }
+      return
+    }
+    if (id.indexOf("repository-loadout:") === 0) {
+      engine.selectRepositoryLoadout(id.substring(19))
+      return
+    }
+    if (id.indexOf("repository-backup:") === 0) {
+      selectedBackupCommit = id.substring(18)
+      return
+    }
     if (id.indexOf("share-start-preset:") === 0) {
       beginShare("preset", id.substring(19))
       return
@@ -245,9 +341,74 @@ Panel {
         if (!engine.backupNow()) flash("Already running")
         break
       case "restore":
-        // Restore installs packages and needs sudo, so it belongs in a terminal
-        // you can watch and answer — not behind a button that silently sudos.
-        Quickshell.execDetached(["omarchy-launch-terminal", engine.cli, "restore"])
+        root.setTab("repositories")
+        flash("Select a vault and an exact backup first")
+        break
+      case "sync-preview":
+        engine.previewSync(engine.selectedRepositoryName)
+        break
+      case "sync-review":
+        var syncAction = engine.syncPreview && engine.syncPreview.status === "remote-ahead" ? "pull"
+          : engine.syncPreview && engine.syncPreview.status === "local-ahead" ? "push" : "preview"
+        engine.openSync(engine.selectedRepositoryName, syncAction)
+        root.close()
+        break
+      case "repository-loadout-compose":
+        root.setTab("share")
+        engine.refreshShareCatalog()
+        break
+      case "repository-loadout-preview":
+        engine.openRepositoryApply(engine.selectedRepositoryPath,
+                                   engine.selectedRepositoryLoadoutId, true)
+        break
+      case "repository-loadout-apply":
+        engine.openRepositoryApply(engine.selectedRepositoryPath,
+                                   engine.selectedRepositoryLoadoutId, false)
+        root.close()
+        break
+      case "repository-backup-restore":
+        engine.openRestore(engine.selectedRepositoryPath, selectedBackupCommit)
+        root.close()
+        break
+      case "retention-keep": retentionKeepField.forceActiveFocus(); break
+      case "retention-preview":
+        if (!engine.previewRetention(engine.selectedRepositoryPath, retentionKeep))
+          flash("Enter a positive number of backups to keep")
+        break
+      case "retention-apply":
+        engine.openRetention(engine.selectedRepositoryPath, retentionKeep)
+        root.close()
+        break
+      case "repository-setting-name": repositoryNameField.forceActiveFocus(); break
+      case "repository-setting-path": repositoryPathField.forceActiveFocus(); break
+      case "repository-setting-type":
+        repositorySettingType = repositorySettingType === "loadouts" ? "vault" : "loadouts"
+        break
+      case "repository-setting-remote": repositoryRemoteField.forceActiveFocus(); break
+      case "repository-setting-save":
+        if (repositorySettingName === "" || repositorySettingPath === "") {
+          flash("Repository name and absolute path are required"); break
+        }
+        if (Model.isRessLocation(repositorySettingPath)) {
+          flash("Ress directories are port sources, not live Montage repositories"); break
+        }
+        if (!engine.openRepositoryConfigure(repositorySettingName, repositorySettingPath,
+                                            repositorySettingType, repositorySettingRemote, true)) {
+          flash("Choose an independent Montage repository location"); break
+        }
+        root.close()
+        break
+      case "port-source": portSourceField.forceActiveFocus(); break
+      case "port-destination": portDestinationField.forceActiveFocus(); break
+      case "port-loadout-id": portLoadoutIdField.forceActiveFocus(); break
+      case "port-preview":
+        if (!engine.previewPort(portSource, portDestination, false))
+          flash("Add separate source and destination paths")
+        break
+      case "port-publish":
+        if (!engine.openPortImport(engine.portPreview, engine.selectedRepositoryName, portLoadoutId)) {
+          flash("Select a loadout repository and provide a new stable id"); break
+        }
         root.close()
         break
       case "auto":
@@ -270,7 +431,8 @@ Panel {
         if (shareName.replace(/^\s+|\s+$/g, "") === "") { flash("Add a loadout name"); break }
         if (shareName.length > 120 || shareDescription.length > 1000) { flash("Name or description is too long"); break }
         if (pendingWithdrawals().length > 0) { flash("Acknowledge unavailable resources first"); break }
-        if (!engine.shareCustom(shareName, shareDescription,
+        if (!engine.shareCustom(engine.selectedRepositoryName, engine.selectedRepositoryLoadoutId,
+                                shareName, shareDescription,
                                 Model.selectedShareIds(shareSelection), shareAcknowledgements))
           flash("Already running")
         break
@@ -283,19 +445,8 @@ Panel {
         copyProc.running = true
         break
       case "folder":
-        Quickshell.execDetached(["xdg-open", engine.home + "/.local/share/ress/profile"])
-        break
-      case "url":
-        urlField.forceActiveFocus()
-        break
-      case "preview":
-        if (applyUrl === "") { flash("Paste a profile URL first"); break }
-        engine.openApply(applyUrl, true)
-        break
-      case "apply":
-        if (applyUrl === "") { flash("Paste a profile URL first"); break }
-        engine.openApply(applyUrl, false)
-        root.close()
+        if (engine.selectedRepositoryPath !== "")
+          Quickshell.execDetached(["xdg-open", engine.selectedRepositoryPath])
         break
       case "loadout-update":
         engine.openLoadoutAction("update", selectedLoadoutId, "")
@@ -320,7 +471,10 @@ Panel {
   function flash(message) { notice = message; noticeTimer.restart() }
 
   readonly property string shareCommand:
-    "ress apply " + engine.setting("PROFILE_URL", "ress.sh/gh/<you>/<your-loadout>")
+    engine.selectedRepositoryLoadoutId === "" ? "Select a repository loadout first"
+      : ("mntg apply " + (selectedRepository() && selectedRepository().remote !== ""
+          ? Model.stripCredentials(selectedRepository().remote) : engine.selectedRepositoryPath)
+        + " --loadout " + engine.selectedRepositoryLoadoutId)
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -432,8 +586,10 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: urlField.activeFocus || shareNameField.activeFocus ||
-        shareDescriptionField.activeFocus || shareSearchField.activeFocus
+      blocked: shareNameField.activeFocus || shareDescriptionField.activeFocus || shareSearchField.activeFocus ||
+        repositoryNameField.activeFocus || repositoryPathField.activeFocus || repositoryRemoteField.activeFocus ||
+        portSourceField.activeFocus || portDestinationField.activeFocus || portLoadoutIdField.activeFocus ||
+        retentionKeepField.activeFocus
       onMoveRequested: function(dx, dy) { root.moveCursor(dx, dy) }
       onActivateRequested: root.activate()
       onCloseRequested: root.close()
@@ -442,6 +598,7 @@ Panel {
         var key = String(t).toLowerCase()
         if (key === "b") root.trigger("backup")
         else if (key === "r") root.trigger("restore")
+        else if (key === "o") root.setTab("repositories")
         else if (key === "s") root.setTab("share")
         else if (key === "a" || key === "l") root.setTab("loadouts")
         else if (key === "?") root.setTab("backup")
@@ -466,7 +623,7 @@ Panel {
           // ------------------------------------------------------------ hero
           PanelHero {
             width: parent.width
-            title: "ress"
+            title: "Montage"
             meta: engine.anyBusy ? (engine.currentStep || "Working…")
               : engine.externallyBusy ? "Scheduled backup running…"
               : engine.lastBackup > 0 ? ("Backed up " + engine.agoText)
@@ -481,6 +638,7 @@ Panel {
                 font.pixelSize: Style.font.display
               }
             }
+
           }
 
           // Progress only exists while something is running, and it reads the
@@ -576,8 +734,8 @@ Panel {
                 width: (parent.width - Style.space(8)) / 2
                 rowId: "restore"
                 glyph: "󰦛"
-                title: "Restore"
-                subtitle: "r · opens a terminal"
+                title: "Browse backups"
+                subtitle: "r · select an exact commit"
               }
             }
 
@@ -658,6 +816,325 @@ Panel {
             }
           }
 
+          // ----------------------------------------------- repositories tab
+          Column {
+            visible: root.tab === "repositories"
+            width: parent.width
+            spacing: Style.space(10)
+
+            Text {
+              width: parent.width
+              text: "Choose a Montage repository, then inspect its stable loadouts or immutable backup history. All validity and synchronization state comes from mntg."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+
+            Text {
+              visible: root.repositoryViewState === "loading"
+              width: parent.width
+              text: "Loading repositories…"
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+            Text {
+              visible: root.repositoryViewState === "invalid"
+              width: parent.width
+              text: "Repository information is invalid or unavailable. No state was inferred from repository files."
+              color: root.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              wrapMode: Text.WordWrap
+            }
+            Text {
+              visible: root.repositoryViewState === "empty"
+              width: parent.width
+              text: engine.selectedRepositoryName === ""
+                ? "No Montage repositories are configured."
+                : "This repository has no items yet."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            PanelSectionHeader { text: "REPOSITORIES"; foreground: root.foreground; fontFamily: root.fontFamily }
+            Repeater {
+              model: engine.repositories ? engine.repositories.repositories : []
+              ActionRow {
+                required property var modelData
+                width: parent.width
+                rowId: "repository:" + modelData.name
+                glyph: !modelData.valid ? "" : (modelData.type === "vault" ? "󰒃" : "󰘬")
+                title: modelData.name
+                subtitle: modelData.type + " · " + modelData.status + " · " + modelData.id
+                primary: engine.selectedRepositoryName === modelData.name
+              }
+            }
+
+            Column {
+              visible: engine.selectedRepositoryName !== ""
+              width: parent.width
+              spacing: Style.space(6)
+
+              Text {
+                width: parent.width
+                text: root.repositoryViewState === "divergent"
+                  ? "Local and remote history diverge. Review synchronization in a terminal."
+                  : root.repositoryViewState === "stale"
+                    ? "The remote has newer history. Review before using this repository."
+                    : root.repositoryViewState === "attention"
+                      ? "This repository needs attention."
+                      : root.repositoryViewState === "healthy" ? "Repository is healthy." : ""
+                color: ["divergent", "stale", "attention"].indexOf(root.repositoryViewState) >= 0
+                  ? root.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WordWrap
+              }
+              ActionRow {
+                width: parent.width
+                rowId: "sync-preview"
+                glyph: ""
+                title: engine.loadingSyncPreview ? "Checking synchronization…" : "Check synchronization"
+                subtitle: engine.syncPreview
+                  ? (engine.syncPreview.status + " · ahead " + engine.syncPreview.ahead + " · behind " + engine.syncPreview.behind)
+                  : "read-only classification"
+                actionable: !engine.loadingSyncPreview
+              }
+              ActionRow {
+                visible: engine.syncPreview !== null
+                width: parent.width; rowId: "sync-review"; glyph: ""
+                title: engine.syncPreview && engine.syncPreview.status === "divergent"
+                  ? "Review divergence in terminal" : "Continue synchronization in terminal"
+                subtitle: "mntg keeps conflict and history decisions visible"
+              }
+
+              Column {
+                visible: engine.selectedRepositoryType === "loadouts"
+                width: parent.width
+                spacing: Style.space(5)
+                PanelSectionHeader { text: "LOADOUTS"; foreground: root.foreground; fontFamily: root.fontFamily }
+                Repeater {
+                  model: engine.repositoryLoadouts ? engine.repositoryLoadouts.items : []
+                  ActionRow {
+                    required property var modelData
+                    width: parent.width
+                    rowId: "repository-loadout:" + modelData.id
+                    glyph: engine.selectedRepositoryLoadoutId === modelData.id ? "" : "○"
+                    title: modelData.name
+                    subtitle: modelData.id + " · " + modelData.author
+                    primary: engine.selectedRepositoryLoadoutId === modelData.id
+                  }
+                }
+                Text {
+                  visible: !!(engine.repositoryLoadouts && engine.repositoryLoadouts.invalid.length)
+                  width: parent.width
+                  text: engine.repositoryLoadouts
+                    ? Model.plural(engine.repositoryLoadouts.invalid.length, "invalid loadout") + " omitted by mntg"
+                    : ""
+                  color: root.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+                ActionRow {
+                  visible: engine.selectedRepositoryLoadoutId !== ""
+                  width: parent.width; rowId: "repository-loadout-compose"; glyph: "󰏫"
+                  title: "Compose selected loadout"; subtitle: "edit its validated resource selection"
+                }
+                ActionRow {
+                  visible: engine.selectedRepositoryLoadoutId !== ""
+                  width: parent.width; rowId: "repository-loadout-preview"; glyph: ""
+                  title: "Preview apply"; subtitle: "dry run in a terminal"
+                }
+                ActionRow {
+                  visible: engine.selectedRepositoryLoadoutId !== ""
+                  width: parent.width; rowId: "repository-loadout-apply"; glyph: ""
+                  title: "Apply selected loadout"; subtitle: "review and consent in a terminal"
+                }
+              }
+
+              Column {
+                visible: engine.selectedRepositoryType === "vault"
+                width: parent.width
+                spacing: Style.space(5)
+                PanelSectionHeader { text: "BACKUP HISTORY"; foreground: root.foreground; fontFamily: root.fontFamily }
+                Repeater {
+                  model: engine.backupHistory ? engine.backupHistory.backups : []
+                  ActionRow {
+                    required property var modelData
+                    width: parent.width
+                    rowId: "repository-backup:" + modelData.commit
+                    glyph: root.selectedBackupCommit === modelData.commit ? "" : "󰋚"
+                    title: modelData.label || modelData.subject || modelData.createdAt
+                    subtitle: modelData.createdAt + " · " + modelData.commit.substring(0, 12)
+                    primary: root.selectedBackupCommit === modelData.commit
+                  }
+                }
+                Text {
+                  visible: root.selectedBackup() !== null
+                  width: parent.width
+                  text: {
+                    var backup = root.selectedBackup()
+                    return backup ? (backup.commit + "\n" + Model.summarize(backup.counts)) : ""
+                  }
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WrapAnywhere
+                }
+                ActionRow {
+                  visible: root.selectedBackupCommit !== ""
+                  width: parent.width; rowId: "repository-backup-restore"; glyph: "󰦛"
+                  title: "Restore this exact backup"; subtitle: "opens a terminal pinned to the full commit"
+                }
+                TextField {
+                  id: retentionKeepField
+                  width: parent.width; placeholderText: "Backups to keep"; text: root.retentionKeep
+                  foreground: root.foreground; font.family: root.fontFamily
+                  hasCursor: root.hasCursor("retention-keep")
+                  onTextChanged: root.retentionKeep = text
+                  onAccepted: keyCatcher.forceActiveFocus()
+                  Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                }
+                ActionRow {
+                  width: parent.width; rowId: "retention-preview"; glyph: ""
+                  title: engine.loadingRetentionPreview ? "Planning retention…" : "Preview retention"
+                  subtitle: "read-only list of exact commits that would be removed"
+                  actionable: !engine.loadingRetentionPreview
+                }
+                Text {
+                  visible: engine.retentionPreview !== null
+                  width: parent.width
+                  text: engine.retentionPreview
+                    ? (Model.plural(engine.retentionPreview.removed.length, "backup") + " would be removed"
+                      + (engine.retentionPreview.remoteDivergence ? " · remote history would diverge" : "")
+                      + (engine.retentionPreview.blocked ? " · blocked by labels" : "")) : ""
+                  color: engine.retentionPreview && (engine.retentionPreview.blocked || engine.retentionPreview.remoteDivergence)
+                    ? root.urgent : root.foreground
+                  font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+                }
+                ActionRow {
+                  visible: !!(engine.retentionPreview && engine.retentionPreview.changed && !engine.retentionPreview.blocked)
+                  width: parent.width; rowId: "retention-apply"; glyph: ""
+                  title: "Run retention in terminal"; subtitle: "previews again and asks before rewriting history"
+                }
+              }
+            }
+
+            PanelSeparator { foreground: root.foreground }
+            PanelSectionHeader { text: "REPOSITORY SETTINGS"; foreground: root.foreground; fontFamily: root.fontFamily }
+            Text {
+              width: parent.width
+              text: "Register an existing Montage repository at an independent absolute path. The CLI validates its identity and serializes the registry update. Credentials are removed from remotes before submission."
+              color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            TextField {
+              id: repositoryNameField
+              width: parent.width; placeholderText: "Repository name"; text: root.repositorySettingName
+              foreground: root.foreground; font.family: root.fontFamily
+              hasCursor: root.hasCursor("repository-setting-name")
+              onTextChanged: root.repositorySettingName = text
+              onAccepted: keyCatcher.forceActiveFocus()
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            TextField {
+              id: repositoryPathField
+              width: parent.width; placeholderText: engine.home + "/.local/share/montage/loadouts"
+              text: root.repositorySettingPath; foreground: root.foreground; font.family: root.fontFamily
+              hasCursor: root.hasCursor("repository-setting-path")
+              onTextChanged: root.repositorySettingPath = text
+              onAccepted: keyCatcher.forceActiveFocus()
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            ActionRow {
+              width: parent.width; rowId: "repository-setting-type"
+              glyph: repositorySettingType === "vault" ? "󰒃" : "󰘬"
+              title: "Repository type"; subtitle: repositorySettingType
+            }
+            TextField {
+              id: repositoryRemoteField
+              width: parent.width; placeholderText: "Credential-free Git remote (optional)"
+              text: root.repositorySettingRemote; foreground: root.foreground; font.family: root.fontFamily
+              hasCursor: root.hasCursor("repository-setting-remote")
+              onTextChanged: root.repositorySettingRemote = Model.stripCredentials(text)
+              onAccepted: keyCatcher.forceActiveFocus()
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            Text {
+              visible: Model.isRessLocation(root.repositorySettingPath)
+              width: parent.width
+              text: "Ress directories cannot be registered as live Montage state. Use the one-time port preview below and a separate destination."
+              color: root.urgent; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            ActionRow {
+              width: parent.width; rowId: "repository-setting-save"; glyph: ""
+              title: "Save repository settings"
+              subtitle: "opens mntg validation and the serialized configuration update"
+              actionable: root.repositorySettingName !== "" && root.repositorySettingPath !== "" &&
+                !Model.isRessLocation(root.repositorySettingPath)
+            }
+
+            PanelSectionHeader { text: "PORT FROM RESS"; foreground: root.foreground; fontFamily: root.fontFamily }
+            Text {
+              width: parent.width
+              text: "A Ress directory is a read-only migration source, never a shared live location. Preview into a separate Montage destination before publishing."
+              color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+            TextField {
+              id: portSourceField
+              width: parent.width; placeholderText: "Ress artifact source"; text: root.portSource
+              foreground: root.foreground; font.family: root.fontFamily; hasCursor: root.hasCursor("port-source")
+              onTextChanged: root.portSource = text
+              onAccepted: keyCatcher.forceActiveFocus()
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            TextField {
+              id: portDestinationField
+              width: parent.width; placeholderText: "Separate Montage destination"; text: root.portDestination
+              foreground: root.foreground; font.family: root.fontFamily; hasCursor: root.hasCursor("port-destination")
+              onTextChanged: root.portDestination = text
+              onAccepted: keyCatcher.forceActiveFocus()
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            TextField {
+              id: portLoadoutIdField
+              visible: !!(engine.portPreview && engine.portPreview.artifactType === "loadout")
+              width: parent.width; placeholderText: "New stable loadout id"; text: root.portLoadoutId
+              foreground: root.foreground; font.family: root.fontFamily; hasCursor: root.hasCursor("port-loadout-id")
+              onTextChanged: root.portLoadoutId = text
+              onAccepted: keyCatcher.forceActiveFocus()
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+            }
+            ActionRow {
+              width: parent.width; rowId: "port-preview"; glyph: ""
+              title: engine.loadingPortPreview ? "Inspecting Ress artifact…" : "Preview Ress port"
+              subtitle: "read-only mntg conversion plan"
+              actionable: !engine.loadingPortPreview && root.portSource !== "" && root.portDestination !== ""
+            }
+            Text {
+              visible: engine.portPreview !== null
+              width: parent.width
+              text: engine.portPreview
+                ? (engine.portPreview.artifactType + " · " + (engine.portPreview.compatible ? "compatible" : engine.portPreview.reason)
+                  + " · " + Model.plural(engine.portPreview.losses.length, "reported loss", "reported losses")) : ""
+              color: engine.portPreview && engine.portPreview.compatible ? root.foreground : root.urgent
+              font.family: root.fontFamily; font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
+            }
+            ActionRow {
+              visible: !!(engine.portPreview && engine.portPreview.compatible)
+              width: parent.width; rowId: "port-publish"; glyph: ""
+              title: "Publish port in terminal"
+              subtitle: "review losses and self-plugin choices before mntg writes"
+              actionable: engine.portPreview && (engine.portPreview.artifactType === "vault" ||
+                (engine.selectedRepositoryType === "loadouts" && root.portLoadoutId !== ""))
+            }
+          }
+
           // ----------------------------------------------------- share tab
           Column {
             visible: root.tab === "share"
@@ -666,10 +1143,12 @@ Panel {
 
             Text {
               width: parent.width
-              text: "Build the current shared loadout from resources on this machine. "
+              text: engine.selectedRepositoryLoadoutId === ""
+                ? "Select a loadout repository and stable loadout on the Repositories tab first."
+                : "Build the selected repository loadout from resources on this machine. "
                 + "The CLI checks every selection again before it changes the profile. "
                 + "No dotfiles, keys, home files or applied-loadout ownership travel."
-              color: root.dim
+              color: engine.selectedRepositoryLoadoutId === "" ? root.urgent : root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
@@ -707,7 +1186,7 @@ Panel {
               }
               ActionRow {
                 width: parent.width; rowId: "share-start-current"; glyph: "󰋚"
-                title: "Current export"
+                title: "Selected loadout"
                 subtitle: engine.shareCatalog && engine.shareCatalog.currentExport.state === "valid"
                   ? "edit its metadata and current selections"
                   : (engine.shareCatalog && engine.shareCatalog.currentExport.state === "absent"
@@ -946,7 +1425,7 @@ Panel {
               rowId: "folder"
               glyph: ""
               title: "Open the profile folder"
-              subtitle: "push it to GitHub, then share the URL"
+              subtitle: "open the selected Montage repository"
             }
           }
 
@@ -958,48 +1437,14 @@ Panel {
 
             Text {
               width: parent.width
-              text: "Applied loadouts are desired state on this machine. Paste a ress.sh link "
-                + "or a GitHub URL to add another. Nothing is installed "
-                + "until you have seen the full list: apply only ever installs "
-                + "packages, adds plugins, adds web apps and sets a theme. "
-                + "A profile cannot carry a script."
+              text: "Applied loadouts are desired state already tracked on this machine. "
+                + "Choose new repository loadouts from the Repositories tab. Mutation actions "
+                + "open in a terminal so package, privilege, and cleanup decisions remain visible."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.WordWrap
             }
-
-            TextField {
-              id: urlField
-              width: parent.width
-              placeholderText: "ress.sh/gh/someone/their-loadout"
-              text: root.applyUrl
-              foreground: root.foreground
-              font.family: root.fontFamily
-              hasCursor: root.hasCursor("url")
-              onTextChanged: root.applyUrl = text
-              onAccepted: root.trigger("preview")
-              // The key catcher is blocked while this has focus, so without this
-              // Escape does nothing and the field cannot be left by keyboard.
-              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-            }
-
-            ActionRow {
-              width: parent.width
-              rowId: "preview"
-              glyph: ""
-              title: "Preview what it installs"
-              subtitle: "a full dry run, in a terminal, changing nothing"
-            }
-            ActionRow {
-              width: parent.width
-              rowId: "apply"
-              glyph: ""
-              title: "Apply this loadout"
-              subtitle: "asks again before the first package"
-            }
-
-            PanelSeparator { foreground: root.foreground }
 
             Text {
               width: parent.width

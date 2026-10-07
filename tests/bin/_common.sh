@@ -13,7 +13,7 @@ log_call() {
 
 state() { printf '%s' "${FAKE_STATE:?FAKE_STATE is not set — run through tests/run.sh}"; }
 
-# Everything after the last `--`, which is how ress closes an option list.
+# Everything after the last `--`, which is how mntg closes an option list.
 args_after_dashdash() {
   local seen=0 arg
   for arg in "$@"; do

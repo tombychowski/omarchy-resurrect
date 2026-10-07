@@ -7,7 +7,7 @@ apply_yes "$P"
 ID=$(first_loadout_id)
 printf 'alpha\n' >"$FAKE_STATE/remove-required.txt"
 : >"$CALLS"
-ress loadout remove --yes "$ID"
+mntg loadout remove --yes "$ID"
 assert_fails "dependency refusal leaves removal pending"
 assert_output "removal-pending"
 assert_called "pacman -R --noconfirm -- alpha"
@@ -17,7 +17,7 @@ assert_equals "$(jq -r '.loadouts[0].state' "$(registry_path)")" "removal-pendin
 
 : >"$FAKE_STATE/remove-required.txt"
 printf 'old-dependency\n' >"$FAKE_STATE/orphaned.txt"
-ress loadout remove --yes "$ID"
+mntg loadout remove --yes "$ID"
 assert_ok "rerun resumes package cleanup"
 assert_output "unneeded dependencies remain (not removed)"
 assert_no_output "removed old-dependency" "orphans are report-only"
@@ -31,7 +31,7 @@ REGISTRY=$(registry_path)
 jq '.resources[] |= (if .id=="package:pacman" then .firstObserved="absent" | .cleanupPolicy="remove" else . end)' \
   "$REGISTRY" >"$SANDBOX/forged.json" && mv "$SANDBOX/forged.json" "$REGISTRY"
 chmod 600 "$REGISTRY"; : >"$CALLS"
-ress loadout remove --yes "$CID"
+mntg loadout remove --yes "$CID"
 assert_fails "critical package is protected even from forged ownership"
 assert_output "PROTECTED  package:pacman"
 assert_not_called "pacman -R --noconfirm -- pacman"

@@ -15,8 +15,10 @@ const source = fs
 
 const Model = {};
 new Function("exports", source + "\n" + [
-  "CATEGORIES", "ago", "freshness", "stripCredentials",
+  "CATEGORIES", "ago", "freshness", "stripCredentials", "isRessLocation",
   "plural", "summarize", "parseRecord", "consent",
+  "parseRepositoryList", "parseLoadoutCatalog", "parseBackupList", "parseRetentionResult", "parseSyncResult", "parsePortReport",
+  "repositoryPanelState",
   "loadoutState", "resourceHealth", "parseLoadoutList", "parseLoadoutCheck", "mergeLoadoutViews",
   "summarizeLoadoutContent", "loadoutContentNames",
   "parseShareCatalog", "shareSelection", "selectedShareIds", "toggleShareResource",
@@ -76,6 +78,9 @@ check("strip user:pass", Model.stripCredentials("https://u:p@github.com/a/b"),
 check("strip nothing to strip", Model.stripCredentials("https://github.com/a/b"),
   "https://github.com/a/b");
 check("strip empty", Model.stripCredentials(""), "");
+check("recognize Ress live root", Model.isRessLocation("/home/me/.local/share/ress/vault"), true);
+check("recognize Ress directory", Model.isRessLocation("/srv/ress/loadouts"), true);
+check("Montage location is independent", Model.isRessLocation("/home/me/.local/share/montage/vault"), false);
 
 // ---- parseRecord: the --porcelain protocol the panel reads ---------------
 check("parse step", Model.parseRecord("STEP|packages|ok|done"),
@@ -86,6 +91,13 @@ check("parse progress", Model.parseRecord("PROGRESS|config|3|10"),
 check("parse log", Model.parseRecord("LOG|will run: 1 Omarchy hook").message,
   "will run: 1 Omarchy hook");
 check("parse done", Model.parseRecord("DONE|fail|blocked by the secret scan").state, "fail");
+check("parse sync", Model.parseRecord("SYNC|1|divergent|2|3|true|preview|false|decision-required"),
+  { type: "sync", schemaVersion: 1, status: "divergent", ahead: 2, behind: 3,
+    fetchOk: true, performed: "preview", actionOk: false, reason: "decision-required" });
+check("parse port", Model.parseRecord("PORT|1|import-vault|vault|true|false|preview"),
+  { type: "port", schemaVersion: 1, operation: "import-vault", artifactType: "vault",
+    compatible: true, published: false, reason: "preview" });
+check("reject newer sync record", Model.parseRecord("SYNC|2|equal|0|0|true|preview|true|"), null);
 // A message containing the separator must survive intact, since paths and
 // commands in LOG records legitimately contain one.
 check("parse embedded pipes", Model.parseRecord("LOG|a|b|c").message, "a|b|c");
@@ -98,16 +110,18 @@ check("parse null", Model.parseRecord(null), null);
 // ---- loadout lifecycle JSON ---------------------------------------------
 const loadout = { id: "work-a1b2", name: "Work", state: "healthy",
   resourceCount: 3, attentionCount: 0 };
-check("parse loadout list", Model.parseLoadoutList({ loadouts: [loadout] }), [loadout]);
-check("parse empty loadout list", Model.parseLoadoutList({ loadouts: [] }), []);
-check("reject malformed loadout result", Model.parseLoadoutList({ loadouts: [{ id: "x" }] }), null);
-check("reject unknown loadout state", Model.parseLoadoutList({ loadouts: [{ ...loadout, state: "magic" }] }), null);
+const loadoutList = (loadouts) => ({ schemaVersion: 1, kind: "montage-applied-loadout-list", loadouts });
+const loadoutCheck = (healthy, loadouts) => ({ schemaVersion: 1, kind: "montage-loadout-check", healthy, loadouts });
+check("parse loadout list", Model.parseLoadoutList(loadoutList([loadout])), [loadout]);
+check("parse empty loadout list", Model.parseLoadoutList(loadoutList([])), []);
+check("reject malformed loadout result", Model.parseLoadoutList(loadoutList([{ id: "x" }])), null);
+check("reject unknown loadout state", Model.parseLoadoutList(loadoutList([{ ...loadout, state: "magic" }])), null);
 const checked = { id: "work-a1b2", name: "Work", state: "drifted", attentionCount: 1,
   resources: [{ id: "package:fd", currentState: "missing", healthState: "missing" }] };
-check("parse live loadout health", Model.parseLoadoutCheck({ healthy: false, loadouts: [checked] }), [checked]);
-check("reject malformed live resource", Model.parseLoadoutCheck({ healthy: false, loadouts: [
+check("parse live loadout health", Model.parseLoadoutCheck(loadoutCheck(false, [checked])), [checked]);
+check("reject malformed live resource", Model.parseLoadoutCheck(loadoutCheck(false, [
   { ...checked, resources: [{ id: "package:fd", currentState: "magic" }] }
-] }), null);
+])), null);
 check("merge stored content with live health", Model.mergeLoadoutViews([loadout], [checked]), [{
   ...loadout, state: "drifted", attentionCount: 1, resources: checked.resources
 }]);
@@ -128,6 +142,10 @@ check("list loadout content names", Model.loadoutContentNames(profile),
 const fingerprint = "a".repeat(64);
 const shareCatalog = {
   schemaVersion: 1,
+  kind: "montage-share-catalog",
+  repositoryId: "personal-library",
+  loadoutId: "work-1",
+  repositoryCommit: "a".repeat(40),
   resources: [
     { id: "package:fd", kind: "package", name: "fd", shareable: true,
       reasonCode: "", reason: "", channels: ["native"], active: false },
@@ -200,6 +218,63 @@ const largeCatalog = { ...shareCatalog, resources: Array.from({ length: 1000 }, 
   presets: { state: "unavailable", loadouts: [], reasonCode: "invalid-registry", reason: "bad" } };
 check("large catalog validates", Model.parseShareCatalog(largeCatalog), largeCatalog);
 check("large catalog detail is bounded", Model.filterShareResources(largeCatalog, "package", "", 200).length, 200);
+
+// ---- repository, history, sync, and port JSON ---------------------------
+const repositoryList = { schemaVersion: 1, kind: "montage-repository-list", revision: 2,
+  repositories: [{ name: "personal", path: "/tmp/personal", type: "loadouts",
+    id: "personal-library", remote: "https://github.com/example/loadouts", valid: true, status: "healthy" }] };
+check("parse repository list", Model.parseRepositoryList(repositoryList), repositoryList);
+check("reject credentialed repository list", Model.parseRepositoryList({ ...repositoryList,
+  repositories: [{ ...repositoryList.repositories[0], remote: undefined }] }), null);
+const repositoryCommit = "b".repeat(40);
+const loadoutCatalog = { schemaVersion: 1, kind: "montage-loadout-catalog",
+  repositoryId: "personal-library", repositoryCommit, path: "/tmp/personal",
+  items: [{ id: "work-1", name: "Work", repositoryId: "personal-library",
+    repositoryCommit, digest: "c".repeat(64) }], invalid: [] };
+check("parse repository loadouts", Model.parseLoadoutCatalog(loadoutCatalog), loadoutCatalog);
+check("reject catalog identity mismatch", Model.parseLoadoutCatalog({ ...loadoutCatalog,
+  items: [{ ...loadoutCatalog.items[0], repositoryId: "other" }] }), null);
+const backupList = { schemaVersion: 1, kind: "montage-backup-list", repositoryId: "laptop-vault",
+  path: "/tmp/vault", backups: [{ commit: "d".repeat(40), createdAt: "2026-10-06T00:00:00Z",
+    labels: ["before-upgrade"], counts: { packages: 2 }, sourceMachine: { hostname: "laptop" } }] };
+check("parse backup history", Model.parseBackupList(backupList), backupList);
+check("reject abbreviated backup identity", Model.parseBackupList({ ...backupList,
+  backups: [{ ...backupList.backups[0], commit: "deadbeef" }] }), null);
+const retention = { schemaVersion: 1, kind: "montage-backup-retention", repositoryId: "laptop-vault",
+  keep: 10, changed: true, kept: ["d".repeat(40)], removed: ["e".repeat(40)],
+  protectedLabels: [], blocked: false, remoteDivergence: true, rewritten: [] };
+check("parse retention preview", Model.parseRetentionResult(retention), retention);
+check("reject partial retention preview", Model.parseRetentionResult({ ...retention, removed: undefined }), null);
+const syncResult = { schemaVersion: 1, kind: "montage-repository-sync", repositoryId: "personal-library",
+  repositoryType: "loadouts", path: "/tmp/personal", remote: "https://github.com/example/loadouts",
+  status: "divergent", localCommit: "e".repeat(40), remoteCommit: "f".repeat(40), ahead: 1, behind: 2,
+  fetch: { ok: true, errorCode: null } };
+check("parse divergent sync", Model.parseSyncResult(syncResult), syncResult);
+check("reject credentialed sync remote", Model.parseSyncResult({ ...syncResult,
+  remote: "https://TOKEN@github.com/example/loadouts" }), null);
+const portReport = { schemaVersion: 1, kind: "montage-port-report", operation: "import-vault",
+  artifactType: "vault", format: "ress-v1", artifactVersion: 1, source: "/tmp/ress-vault",
+  destination: "/tmp/montage-vault", selectedRevisions: [], warnings: [], losses: [], mutations: [], compatible: true };
+check("parse port preview", Model.parsePortReport(portReport), portReport);
+check("parse another bounded port format", Model.parsePortReport({ ...portReport, format: "other-v2" }),
+  { ...portReport, format: "other-v2" });
+check("parse another bounded artifact type", Model.parsePortReport({ ...portReport, artifactType: "bundle" }),
+  { ...portReport, artifactType: "bundle" });
+check("reject unsafe port format id", Model.parsePortReport({ ...portReport, format: "Other/v2" }), null);
+check("reject unsafe port artifact type", Model.parsePortReport({ ...portReport, artifactType: "../vault" }), null);
+check("reject unversioned port preview", Model.parsePortReport({ ...portReport, schemaVersion: 2 }), null);
+check("repository panel loading", Model.repositoryPanelState(true, null, null, null, null), "loading");
+check("repository panel invalid", Model.repositoryPanelState(false, null, null, null, null), "invalid");
+check("repository panel empty", Model.repositoryPanelState(false,
+  { ...repositoryList, repositories: [] }, null, null, null), "empty");
+check("repository panel attention", Model.repositoryPanelState(false, repositoryList,
+  repositoryList.repositories[0], loadoutCatalog, { ...syncResult, status: "fetch-failed" }), "attention");
+check("repository panel healthy", Model.repositoryPanelState(false, repositoryList,
+  repositoryList.repositories[0], loadoutCatalog, { ...syncResult, status: "equal" }), "healthy");
+check("repository panel stale", Model.repositoryPanelState(false, repositoryList,
+  repositoryList.repositories[0], loadoutCatalog, { ...syncResult, status: "remote-ahead" }), "stale");
+check("repository panel divergent", Model.repositoryPanelState(false, repositoryList,
+  repositoryList.repositories[0], loadoutCatalog, syncResult), "divergent");
 
 // ---- the category table the panel renders --------------------------------
 check("categories count", Model.CATEGORIES.length, 6);

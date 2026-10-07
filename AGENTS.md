@@ -11,7 +11,7 @@ Use OpenSpec for behavioral changes:
 - reconcile affected contracts, workflows, panel semantics, and tests in the same change; and
 - require implementation plus automated evidence for current-behavior claims, or record why validation is real-machine/fresh-VM only.
 
-The CLI entrypoint `bin/ress` and its sourced modules under `lib/ress/` are one authoritative CLI for machine inspection, validation, mutation, persistent state, and consumer output. `Panel.qml`, `Service.qml`, and `Model.js` remain consumers and presentation; do not create a second vault or machine-state interpretation in QML. See [`docs/architecture/cli-modules.md`](docs/architecture/cli-modules.md) for module ownership and extension guidance.
+The CLI entrypoint `bin/mntg` and its sourced modules under `lib/montage/` are one authoritative CLI for machine inspection, validation, mutation, persistent state, and consumer output. `Panel.qml`, `Service.qml`, and `Model.js` remain consumers and presentation; do not create a second vault or machine-state interpretation in QML. See [`docs/architecture/cli-modules.md`](docs/architecture/cli-modules.md) for module ownership and extension guidance.
 
 Run focused cases while working:
 

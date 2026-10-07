@@ -1,10 +1,10 @@
 source "$TESTS_DIR/lib/loadout.sh"
 
-config_dir="$XDG_CONFIG_HOME/ress"
+config_dir="$XDG_CONFIG_HOME/montage"
 config_file="$config_dir/config"
 mkdir -p "$config_dir"
 
-ress set AUTO_PUSH=0 AUTO_BACKUP=off
+mntg set AUTO_PUSH=0 AUTO_BACKUP=off
 assert_ok "initial settings are written"
 before=$(sha256sum "$config_file")
 
@@ -20,7 +20,7 @@ lock_pid=$!
 for _ in {1..100}; do [[ -e $lock_ready ]] && break; sleep 0.02; done
 assert_file "$lock_ready" "independent config-lock owner started"
 
-ress set AUTO_PUSH=1
+mntg set AUTO_PUSH=1
 assert_fails "settings update fails when the config lock times out"
 assert_output "configuration is busy; try again" "lock timeout has a clear retryable error"
 after=$(sha256sum "$config_file")
@@ -42,9 +42,9 @@ queue_release="$SANDBOX/config-queue-release"
 queue_pid=$!
 for _ in {1..100}; do [[ -e $queue_ready ]] && break; sleep 0.02; done
 
-"$RESS" set AUTO_PUSH=1 >"$SANDBOX/writer-one.out" 2>&1 &
+"$MNTG" set AUTO_PUSH=1 >"$SANDBOX/writer-one.out" 2>&1 &
 writer_one=$!
-"$RESS" set AUTO_BACKUP=on >"$SANDBOX/writer-two.out" 2>&1 &
+"$MNTG" set AUTO_BACKUP=on >"$SANDBOX/writer-two.out" 2>&1 &
 writer_two=$!
 sleep 0.1
 : >"$queue_release"

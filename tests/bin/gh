@@ -1,0 +1,14 @@
+#!/bin/bash
+# Test double: optional GitHub visibility response. Absence models a safely
+# unavailable or unauthenticated API rather than guessing privacy.
+source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
+log_call "gh $*"
+[[ ${1:-} == repo && ${2:-} == view ]] || exit 1
+[[ -f $(state)/gh-visibility ]] || exit 1
+case "$(<"$(state)/gh-visibility")" in
+  public) printf 'PUBLIC\n' ;;
+  private) printf 'PRIVATE\n' ;;
+  internal) printf 'INTERNAL\n' ;;
+  unavailable|unauthenticated) exit 1 ;;
+  *) exit 1 ;;
+esac

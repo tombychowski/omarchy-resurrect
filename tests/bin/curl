@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test double: answers the AUR RPC and nothing else. Any other URL is a
-# deliberate failure, so a case can prove ress never reaches the network for
+# deliberate failure, so a case can prove mntg never reaches the network for
 # anything it has not been taught to reach for.
 source "$(dirname "${BASH_SOURCE[0]}")/_common.sh"
 log_call "curl $*"

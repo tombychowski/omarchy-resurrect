@@ -7,32 +7,40 @@ Defines the version and migration boundary that lets ress recognize supported va
 ## Requirements
 
 ### Requirement: Vault Schema Version Is Validated Before Use
-The system SHALL accept a vault schema version only when it is a plain supported integer and SHALL reject invalid or unsupported values before mutation.
+
+The system SHALL accept a Montage repository envelope, backup snapshot, portable profile, or port source version only when it is a plain supported integer and SHALL reject invalid or unsupported values before mutation.
 
 #### Scenario: Hostile schema expression is rejected
-- **WHEN** a fetched vault provides a schema version containing non-numeric shell or arithmetic syntax
-- **THEN** ress rejects the vault before evaluating that content or changing machine state
+
+- **WHEN** an artifact provides a schema version containing non-numeric shell or arithmetic syntax
+- **THEN** Montage rejects the artifact before evaluating that content or changing repository or machine state
 
 #### Scenario: Unsupported future schema is rejected
-- **WHEN** a vault declares a well-formed schema version newer than the supported version
-- **THEN** ress stops with a compatibility error before restore
+
+- **WHEN** an artifact declares a well-formed schema version newer than the supported version for its artifact type
+- **THEN** Montage stops with a compatibility error before import, backup, apply, or restore
 
 ### Requirement: Current Manifest Name Is Canonical
-The system SHALL write the current vault manifest as `ress.json`.
+
+The system SHALL write the Montage repository envelope as `montage.json`, the current vault snapshot manifest as `backup.json`, and replacement files with a `.montage-bak` suffix. It SHALL NOT write `ress.json` as a Montage-native control file.
 
 #### Scenario: New backup writes current manifest
-- **WHEN** backup completes against a current vault
-- **THEN** the vault contains `ress.json`
-- **AND** does not write the legacy manifest name
+
+- **WHEN** backup completes against a current Montage vault repository
+- **THEN** the repository contains `montage.json` and `backup.json`
+- **AND** does not write a Ress manifest as a native control
 
 ### Requirement: Defined Legacy Vault Artifacts Remain Readable
-The system SHALL recognize the supported legacy manifest and backup suffixes and SHALL migrate the legacy manifest name during a subsequent backup.
+
+The system SHALL recognize supported Ress v1 manifests and backup suffixes only through the explicit Ress port adapter. It SHALL NOT migrate a Ress vault in place or interpret Ress controls as Montage-native repository controls.
 
 #### Scenario: Legacy manifest is restored
-- **WHEN** a supported vault contains the legacy manifest name
-- **THEN** restore reads it under the supported schema rules
+
+- **WHEN** an explicit Ress import receives a supported legacy manifest name
+- **THEN** the port adapter reads it under the supported Ress v1 rules in staging
 
 #### Scenario: Legacy vault is backed up again
-- **WHEN** backup runs against a vault using the legacy manifest name
-- **THEN** ress writes the canonical manifest
-- **AND** removes the obsolete manifest name from the new snapshot
+
+- **WHEN** the user confirms import of a supported Ress vault
+- **THEN** Montage publishes a separate Montage-native repository
+- **AND** leaves the Ress manifest names and source directory unchanged
