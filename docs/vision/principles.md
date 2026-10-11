@@ -1,48 +1,53 @@
 # Principles
 
-These principles constrain product and engineering decisions. The linked OpenSpec capabilities own current observable guarantees; statements marked as design guidance describe how to evaluate future work.
+## Users own libraries and state
 
-## The user owns the state
-
-Vaults, profiles, configuration, and progress state remain inspectable local files. Network storage is optional, and remote credentials are never a prerequisite for using Montage. This is design guidance reflected by the vault-capture and loadout-sharing capabilities.
+Loadout libraries, configuration, and applied-state records are inspectable
+local files. A remote is optional and credentials stay with Git transport.
 
 ## Use the least-powerful representation
 
-Capture declarative state instead of executable artifacts whenever possible: package names instead of install scripts, service names instead of `.wants/` symlink farms, and web-app fields instead of copied launchers. If a safe representation is unavailable, omit and report the item. See vault-capture and loadout-sharing.
+Profiles name packages, pinned integrations, reconstructible web apps, and one
+theme. They do not carry commands, arbitrary files, services, secrets, or
+cleanup instructions. Unrepresentable resources are omitted and reported.
 
 ## Consent follows power
 
-General overwrite confirmation does not authorize running AUR build instructions or enabling persistent user services. Those actions receive separate, informed decisions because they execute code now or later. See explicit-execution-consent.
+General confirmation does not authorize running AUR build instructions.
+Declined work remains pending and machine-readable.
 
-## Preserve before replacing
+## Preserve before removing
 
-Restore and loadout application are additive by default. They do not infer deletion from absence, and existing files are retained before replacement. See non-destructive-defaults.
+Apply is additive. Removal follows validated native claims and current guards;
+it never infers ownership from absence in a profile, removes shared resources,
+or guesses at application data and dependency cleanup.
 
-## Interruption is ordinary
+## Identity and provenance are exact
 
-Long operations should expose progress and preserve enough state to continue safely. Declining gated work is neither failure nor completion; it remains available later. See resumable-restore and explicit-execution-consent.
+Library id, stable item id, source, exact commit, normalized profile digest,
+and pinned plugin or theme commits remain distinct and queryable.
 
-## Secrets take an explicit encrypted path
+## Report the complete truth
 
-Credential-shaped files are excluded from ordinary capture, captured content is scanned before commit, and selected secrets travel only through an opt-in encrypted bundle. Convenience must not create a plaintext credential path. See credential-protection.
-
-## Report truth, including omissions
-
-Montage should name what it captured, skipped, refused, deferred, or cannot reconstruct. Verification must distinguish a missing restorable item from an inventory item that never could travel. See vault-capture, machine-verification, and cli-consumer-protocol.
+Health reporting distinguishes valid empty state from unavailable evidence and
+retains every simultaneous cause even when one summary has precedence. Status
+does not contact a remote or mutate state.
 
 ## The CLI is authoritative
 
-The CLI owns machine inspection, validation, mutation, and stable consumer output. The panel presents that state and dispatches commands; it does not independently reinterpret the vault. See cli-consumer-protocol and panel-integration.
+`bin/mntg` owns inspection, validation, mutation, persistent state, and
+consumer output. QML presents versioned CLI results and never reinterprets Git,
+profiles, registries, or the machine.
 
-## Compatibility is explicit
+## Compatibility is narrow and explicit
 
-External formats have versions and defined migration boundaries. Unrecognized or hostile versions are refused before mutation rather than guessed at. See schema-compatibility.
-
-Interoperability never creates shared live ownership. Legacy artifacts are
-inspected and ported between separate paths, with explicit loss and self-plugin
-decisions. Native repositories, history, locks, configuration, and applied
-ownership remain Montage-only.
+Unsupported versions and hostile input are refused before mutation. Ress v1
+loadout import reads a separate source, reports losses and self-plugin
+decisions, and publishes through the native transaction boundary. A reverse or
+broader conversion requires a new product decision.
 
 ## Stay intentionally narrow
 
-Montage reconstructs Omarchy setup state. It should not grow into a general data-backup system, arbitrary script runner, secrets manager, or remote orchestration service. This is design guidance derived from the [vision](vision.md).
+Montage manages portable Omarchy setup choices. New authority must be
+representable, previewable, consentful, verifiable, and owned without weakening
+these constraints.

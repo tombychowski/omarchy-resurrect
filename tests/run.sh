@@ -3,13 +3,13 @@
 # mntg test runner.
 #
 #   tests/run.sh              run every case
-#   tests/run.sh restore      run cases whose name matches "restore"
+#   tests/run.sh loadout      run cases whose name matches "loadout"
 #   tests/run.sh -v           keep going but print each case's output on failure
 #   tests/run.sh --jobs 4     run isolated cases concurrently; report in order
 #
 # Every case runs in its own sandbox: a throwaway $HOME, a fake package
-# database, and a PATH where tests/bin shadows pacman, yay, sudo, systemctl and
-# the omarchy CLI. Nothing outside the sandbox is read or written.
+# database, and a PATH where tests/bin shadows package, privilege, desktop, and
+# Omarchy tools. Nothing outside the sandbox is read or written.
 
 set -uo pipefail
 

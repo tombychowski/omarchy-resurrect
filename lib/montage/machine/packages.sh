@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Neutral machine package operations shared by private-vault restore and
-# public-loadout workflows. Owns package/AUR observation, consent, and
-# installation helpers; owns no vault, profile, or registry representation.
+# Neutral machine package operations for loadout workflows. Owns package/AUR
+# observation, consent, and installation helpers; owns no profile or registry
+# representation.
 # Depends on core.sh and safety.sh. Definitions only at source time.
 
 # Stable batch facts are read at most once by each planning/check command. The
@@ -20,12 +20,18 @@ machine_observation_snapshot_reset() {
 }
 
 machine_package_snapshot_build() {
-  (( MACHINE_PACKAGE_SNAPSHOT_READY )) && return 0
+  if (( MACHINE_PACKAGE_SNAPSHOT_READY != 0 )); then
+    (( MACHINE_PACKAGE_SNAPSHOT_READY == 1 )); return
+  fi
   [[ -z ${MONTAGE_OBSERVATION_LOG:-} ]] || printf 'package-inventory\n' >>"$MONTAGE_OBSERVATION_LOG"
   MACHINE_INSTALLED_PACKAGES=()
-  local package
+  local package inventory
+  if ! inventory=$(pacman -Qq 2>/dev/null); then
+    MACHINE_PACKAGE_SNAPSHOT_READY=-1
+    return 1
+  fi
   while IFS= read -r package; do [[ -n $package ]] && MACHINE_INSTALLED_PACKAGES[$package]=1; done \
-    < <(pacman -Qq 2>/dev/null || true)
+    <<<"$inventory"
   MACHINE_PACKAGE_SNAPSHOT_READY=1
 }
 
@@ -53,7 +59,7 @@ machine_active_theme() {
 
 aur_denied() { merged_list aur-deny | grep -qxF -- "$1"; }
 
-# Which of these names actually exist on aur.archlinux.org. A name in a vault
+# Which of these names actually exist on aur.archlinux.org. A name in a loadout
 # with nothing behind it is the interesting one: a package renamed, deleted, or
 # never there — which is also what a typo and a squat look like from here.
 #
@@ -109,24 +115,26 @@ aur_note() {
 # person at the terminal. AUR_KEPT holds the names that survived the deny list.
 AUR_MODE="skip"
 AUR_KEPT=()
+AUR_DENIED=()
 aur_gate() {
   local category="$1"; shift
   local names=("$@")
   AUR_KEPT=()
   AUR_MODE="skip"
 
-  local name denied=()
+  local name
+  AUR_DENIED=()
   for name in "${names[@]}"; do
-    if aur_denied "$name"; then denied+=("$name"); else AUR_KEPT+=("$name"); fi
+    if aur_denied "$name"; then AUR_DENIED+=("$name"); else AUR_KEPT+=("$name"); fi
   done
-  (( ${#denied[@]} == 0 )) ||
-    step_warn "$category" "$(plural "${#denied[@]}" "AUR package") on your deny list: ${denied[*]}"
+  (( ${#AUR_DENIED[@]} == 0 )) ||
+    step_warn "$category" "$(plural "${#AUR_DENIED[@]}" "AUR package") on your deny list: ${AUR_DENIED[*]}"
   (( ${#AUR_KEPT[@]} > 0 )) || return 0
 
   # Settled without a prompt?
   local decision="${AUR_CHOICE:-}"
   if [[ -z $decision ]]; then
-    case "${CFG[AUR]:-ask}" in
+    case "$(config_aur_policy)" in
       yes|1|on|true) decision=yes ;;
       no|0|off|false) decision=no ;;
       *) decision=ask ;;

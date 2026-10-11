@@ -37,7 +37,6 @@ harness_setup() {
   : >"$FAKE_STATE/foreign.txt"
   : >"$FAKE_STATE/repo-packages.txt"
   : >"$FAKE_STATE/aur-packages.txt"
-  : >"$FAKE_STATE/enabled-units.txt"
   : >"$FAKE_STATE/shell-running"
 
   # Every double appends one line per invocation. Cases assert on this.
@@ -95,11 +94,6 @@ machine_publish() {
   esac
   printf '%s\n' "$@" >>"$file"
   sort -u -o "$file" "$file"
-}
-
-machine_enable_unit() {
-  printf '%s\n' "$@" >>"$FAKE_STATE/enabled-units.txt"
-  sort -u -o "$FAKE_STATE/enabled-units.txt" "$FAKE_STATE/enabled-units.txt"
 }
 
 # A theme that ships with Omarchy rather than living in the user's config.
@@ -245,8 +239,8 @@ assert_equals() {
 
 # ------------------------------------------------------------------ setup
 
-# The shape of a machine most cases want: a vault, a couple of packages, a
-# dotfile, a plugin, a web app.
+# The shape of a machine most cases want: a few packages and ordinary local
+# configuration that loadout discovery must not mistake for portable authority.
 seed_machine() {
   machine_install native bash git rsync
   machine_publish repo bash git rsync
@@ -284,9 +278,9 @@ Type=Application
 DESKTOP
 }
 
-# Publish a fake upstream at $FAKE_STATE/remotes/<name>, referenced by cases and
-# by vaults as https://github.com/example/<name>. Prints the commit sha, which
-# is what a vault records and what a pinned clone asks for.
+# Publish a fake upstream at $FAKE_STATE/remotes/<name>, referenced as
+# https://github.com/example/<name>. Prints the commit sha used by pinned
+# loadout definitions.
 #
 #   seed_remote plugin <name> <plugin-id>
 #   seed_remote theme  <name>
@@ -312,40 +306,3 @@ seed_remote() {
 }
 
 remote_url() { printf 'https://github.com/example/%s' "$1"; }
-
-# A vault built by hand, which is how a case models "someone else's vault"
-# without pretending to be another machine. Returns the path.
-make_vault() {
-  local dir="${1:-$SANDBOX/foreign-vault}"
-  mkdir -p "$dir"/{packages,home,omarchy,webapps/apps,webapps/icons,plugins,services,report}
-  : >"$dir/packages/native.txt"
-  : >"$dir/packages/foreign.txt"
-  : >"$dir/plugins/plugins.tsv"
-  : >"$dir/services/user-units.txt"
-  : >"$dir/omarchy/themes.tsv"
-  git -C "$dir" init -q -b main
-  printf '%s' "$dir"
-}
-
-# Finish a hand-built native Montage vault: write its repository envelope and
-# current backup manifest, then commit it so restore accepts the snapshot.
-seal_vault() {
-  local dir="$1" host="${2:-otherbox}"
-  local digest repository_id machine_id
-  digest=$(printf '%s' "$dir:$host" | sha256sum | cut -c1-12)
-  repository_id="vault-$digest"
-  machine_id="machine-$digest"
-  jq -n --arg id "$repository_id" --arg machine "$machine_id" \
-    '{schemaVersion: 1, kind: "montage-repository", repositoryType: "vault",
-      id: $id, createdAt: "2026-01-01T00:00:00Z", machineId: $machine}' \
-    >"$dir/montage.json"
-  jq -n --arg host "$host" --arg machine "$machine_id" \
-    '{schemaVersion: 1, kind: "montage-backup", montageVersion: "1.2.0",
-      createdAt: "2026-01-01T00:00:00Z", machineId: $machine,
-      machine: {hostname: $host, user: "someone", omarchy: "4.0.0", kernel: "6.0"},
-      categories: ["packages","config","omarchy","webapps","plugins"],
-      counts: {packages: 0, config: 0, themes: 0, webapps: 0, plugins: 0, secrets: 0, uncaptured: 0, services: 0}}' \
-    >"$dir/backup.json"
-  git -C "$dir" add -A
-  git -C "$dir" commit -q -m "vault"
-}

@@ -1,125 +1,63 @@
 # System overview
 
-Montage is a Bash CLI with a small QML panel and headless scheduling service. The CLI is the authority for persistent machine state; the QML layer reads stable outputs and delegates mutations back to the CLI.
+Montage is one Bash CLI with a QML bar panel. The CLI is the only authority for
+machine observation, persistent state, Git-backed libraries, and mutation.
 
 ## Components
 
-### CLI: `bin/mntg` and `lib/montage/`
+- [`bin/mntg`](../../bin/mntg) loads the literal module list, parses global flags, and dispatches commands.
+- `lib/montage/repository/` owns loadout-library envelopes, configured-library schema 2 and its schema-1 migration, transactions, exact historical reads, and conservative synchronization.
+- `lib/montage/loadout/` owns portable profiles, applied-state provenance and claims, planning, Share, apply, check, repair, update, remove, and resource queries.
+- `lib/montage/machine/packages.sh` owns installed-package/theme observation and package/AUR operations.
+- `lib/montage/port/ress.sh` is the single read-only foreign-input adapter for one Ress v1 profile.
+- `lib/montage/commands.sh` owns status, AUR configuration, doctor, and guarded PATH linking.
+- `Service.qml` invokes documented CLI JSON or porcelain routes and rejects malformed results through `Model.js`.
+- `Panel.qml` presents Libraries, Compose/Share, and Applied Loadouts. Risky synchronization, apply, lifecycle, and migration work continues in an interactive terminal.
 
-The CLI is one Bash program: `bin/mntg` is its only executable entrypoint and
-loads the implementation modules under `lib/montage/` into the same process. It
-implements capture, restore, loadout sharing/application and lifecycle
-management, verification, credential scanning, configuration, status, and
-supporting commands. Together, the entrypoint and modules own input validation,
-resource inspection, consent gates, locking, persistent progress, vault and
-registry formats, cleanup adapters, and consumer output. See the
-[CLI module architecture](cli-modules.md) for file ownership and extension
-guidance.
-
-The internal file split does not change the consumer boundary: the CLI is the
-only component that reads or writes the vault as product state. Human output
-explains decisions; JSON and porcelain output serve automation and the panel.
-
-### `Service.qml`
-
-The service wraps CLI processes for the shell. A panel-owned instance refreshes
-status, configured repositories, selected loadout or backup history, sync and
-retention previews, selected-loadout Share state, Ress port previews, and
-applied-loadout health through versioned `mntg` JSON. It merges only validated
-CLI records by stable identity. It launches backup/share with `--porcelain` and
-exposes UI state. A headless instance schedules backups from CLI-owned config
-and state stamps.
-
-It watches config and state files to know when to refresh presentation, but it does not inspect vault contents or implement restore logic.
-
-### `Panel.qml`
-
-The panel renders backup freshness, repositories, loadout libraries, immutable
-backup history, sync state, settings, sharing, Ress port previews, and an
-applied-loadout inventory. Backup and share can run in-panel through the CLI
-protocol. Exact restore, retention, synchronization decisions, loadout
-mutation, repository configuration, and port publication open an interactive
-terminal because they may need privilege, destructive review, history or loss
-decisions, and independent consent.
-
-### `Model.js`
-
-The model contains presentation-only helpers: freshness and relative-time labels, category descriptions, credential stripping for displayed remotes, consent wording, summaries, and line-protocol parsing. It has no filesystem or process access and is unit-tested under Node.
-
-### Plugin manifest
-
-`manifest.json` registers `Panel.qml` as the bar widget and `Service.qml` as the
-service entry point. The shell-level widget setting is the stale-backup
-threshold; repository settings are validated and serialized through `mntg
-repository configure` from the Repositories tab.
-The plugin, QML module, and IPC target all use `tombychowski.montage`; they do
-not reuse the published Ress plugin identity. See [Application identity and
-coexistence](application-identity.md).
+The manifest registers only the bar widget. There is no background service or
+timer-owned product operation.
 
 ## Persistent state
 
-| Location | Owner | Purpose |
-|---|---|---|
-| `~/.local/share/montage/vault` | CLI | Default private Git vault |
-| `~/.local/share/montage/profile` | CLI | Default exported loadout repository |
-| `~/.config/montage/config` | CLI; watched by QML | User settings and category choices |
-| `~/.config/montage/include`, `exclude`, `aur-deny`, `secrets` | CLI | User extensions to curated policy lists |
-| `~/.local/state/montage/loadouts.json` | CLI; queried through CLI by QML | Applied-loadout snapshots, resource provenance, claims, and operation journal |
-| `~/.local/state/montage/` | CLI; selected stamps watched by QML | Last success/attempt, operation lock marker, restore progress, local scan findings |
+| Location | Purpose |
+|---|---|
+| `~/.config/montage/config` | ordered loadout settings; currently `AUR` |
+| `~/.config/montage/repositories.json` | loadout-only configured-library registry |
+| `~/.config/montage/repositories.json.pre-schema2` | inert exact rollback copy after one-time migration |
+| `~/.local/state/montage/loadouts.json` | applied snapshots, provenance, resources, claims, and operation journal |
+| `~/.local/state/montage/status-evidence.json` | advisory update evidence created only by explicit update preview |
+| `~/.local/state/montage/lock`, `running` | live mutation ownership |
+| user-selected library paths | schema-1 loadout repository envelopes and stable items |
 
-The exact vault and profile formats are defined in [contracts](../contracts/).
+Status reads valid current state locally. A legacy configured-library registry
+is the one exception: its first read performs the locked schema migration.
 
-## Data flow
+## Main flows
 
-### Backup
+Compose discovers current safe resources in the CLI, accepts stable logical
+ids, reinspects before publication, stages a complete item, validates it, and
+publishes through the repository transaction boundary.
 
-1. A user, the panel, or the scheduler invokes `mntg backup`.
-2. The CLI locks the operation, captures enabled categories, writes the manifest, scans captured content, and commits the vault when policy permits.
-3. In porcelain mode, the CLI emits progress records; the panel displays them.
-4. The CLI updates state stamps. File watchers and a status refresh update the panel.
+Apply resolves one profile and exact provenance, plans additive work, obtains
+operation and AUR consent, records desired state before mutation, and journals
+outcomes. Check is read-only; repair is explicit; update advances the same
+immutable library/item identity; remove acts only on recorded claims.
 
-### Restore
+Library synchronization explicitly fetches into a Montage observation ref.
+Fast-forward pull and ordinary push are opt-in; divergence is decision-required.
+Ordinary status uses only the cached result.
 
-1. A user invokes restore directly or the panel opens it in a terminal.
-2. The CLI obtains and validates the vault before mutation.
-3. It previews planned and executable/persistent content, obtains required consent, and replays selected categories.
-4. Completion state is recorded per snapshot so the operation can resume.
-5. `mntg verify` independently compares the resulting machine with restorable vault state.
-
-### Loadout
-
-`mntg share` creates a fixed-schema `profile.json` in one current profile
-repository. Its canonical candidate collector supplies both legacy whole-machine
-export and `mntg share catalog --json`; selective export accepts only logical
-ids, reinspects them under an output-scoped lock, and renders complete generated
-files before replacement. Current-export fingerprints bind explicit withdrawal
-acknowledgements to prior canonical definitions. The catalog exposes no resource
-definitions, commands, file content, credentials, claims, or cleanup authority.
-
-The Share panel requests that catalog only while its workflow is active,
-validates it in `Model.js`, and keeps draft selection and metadata in memory.
-`Service.qml` passes only argument-array metadata, ids, and acknowledgement
-fingerprints to the CLI. QML never reads the profile, package database, plugin
-tree, launchers, theme state, or applied-loadout registry to reconstruct an
-inventory. A CLI refusal refreshes the catalog without being presented as an
-export success.
-
-`mntg apply` resolves and normalizes the source, plans compatible/shared/conflicting resources, confirms, records desired state and a journal before mutation, and records each outcome. Exact reapply reconciles the same local loadout; changed known-source content requires explicit update. Check is read-only, repair is explicit, and removal withdraws claims using provenance and current evidence. The panel consumes CLI JSON and hands mutations to a terminal.
-
-## External tools
-
-The CLI composes existing Omarchy and Arch tools including Git, `jq`, `rsync`, `pacman`, `yay`, `systemctl --user`, `age`, and the `omarchy` CLI. Tests put doubles for these tools on `PATH`; real-machine and VM validation cover behavior the doubles cannot prove.
+Ress migration discovers one contained regular v1 profile, reports exact losses
+and decisions, translates in staging, validates the native result, and publishes
+one selected item. Source content and operational authority never transfer.
 
 ## Trust boundaries
 
-- **Vaults and loadouts are untrusted input.** Names, paths, URLs, schema versions, commits, and launcher fields are validated before they reach commands or mutation.
-- **AUR packages cross an execution boundary.** PKGBUILDs run on the machine, so their build decision is separate from ordinary restore confirmation.
-- **User services cross a persistence boundary.** Enabling a service schedules future execution, so candidates and executable commands are shown before a separate decision.
-- **Secrets cross a confidentiality boundary.** Ordinary capture excludes credential paths; the opt-in secrets path encrypts before storage and restores private permissions.
-- **The panel crosses a consumer boundary.** It receives JSON or porcelain output from the CLI and must tolerate invalid output without inventing state.
-- **The registry crosses a deletion-authority boundary.** It is local but hand-editable, so every mutation validates all identities and relations and reconstructs rather than trusts deletion targets.
-- **Remote Git state crosses a network boundary.** Restorable shared code requires safe remotes and recorded commits unless the user explicitly accepts an unpinned head.
+- Profiles, envelopes, registries, remotes, and Ress input are untrusted and structurally validated before authority is derived.
+- AUR crosses an execution boundary and has separate consent.
+- Applied state crosses a deletion-authority boundary and is validated as a whole before use.
+- Network state changes only through explicit sync or source resolution.
+- QML crosses a consumer boundary and treats malformed results as unavailable.
 
-## Verification boundary
-
-The automated suite proves command decisions and filesystem effects inside a sandbox. It does not prove real package installation, a service starting at login, a visible theme change, rendered panel behavior, or timing on a clean Omarchy installation. Those boundaries are documented in the [testing strategy](../testing/strategy.md).
+See [CLI modules](cli-modules.md), [contracts](../contracts/), and the
+[testing strategy](../testing/strategy.md).

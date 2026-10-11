@@ -17,12 +17,11 @@ loadout_repository_resolve() {
   else
     repository_registry_load || return 1
     entry=$(repository_registry_get "$selector") || return 1
-    [[ $(jq -r '.type' <<<"$entry") == loadouts ]] || return 1
     path=$(jq -r '.path' <<<"$entry")
     [[ $(jq -r '.id' <<<"$entry") == "$(jq -r '.id' "$path/$MONTAGE_REPOSITORY_MANIFEST" 2>/dev/null)" ]] || return 1
   fi
   repository_root_valid "$path" || return 1
-  repository_envelope_validate_file "$path/$MONTAGE_REPOSITORY_MANIFEST" loadouts || return 1
+  repository_envelope_validate_file "$path/$MONTAGE_REPOSITORY_MANIFEST" || return 1
   LOADOUT_REPOSITORY_PATH="$path"
 }
 
@@ -35,7 +34,7 @@ loadout_repository_profile_valid() {
 
 loadout_repository_history_valid() {
   local root="$1" commit="$2" expected_id="$3" tree catalog
-  repository_materialize_history "$root" "$commit" loadouts || return 1
+  repository_materialize_history "$root" "$commit" || return 1
   tree="$REPOSITORY_HISTORY_TREE"
   [[ $(jq -r '.id' "$tree/$MONTAGE_REPOSITORY_MANIFEST") == "$expected_id" ]] || {
     repository_history_release "$tree" >/dev/null 2>&1 || true
@@ -116,7 +115,7 @@ loadout_repository_initialize() {
   montage_make_temp_dir "$parent/.montage-loadouts.XXXXXX" || return 1
   stage="$MONTAGE_TEMP_PATH"
   mkdir "$stage/loadouts" || { rm -rf -- "$stage"; return 1; }
-  repository_envelope_json loadouts "$id" "$created" >"$stage/$MONTAGE_REPOSITORY_MANIFEST" || {
+  repository_envelope_json "$id" "$created" >"$stage/$MONTAGE_REPOSITORY_MANIFEST" || {
     rm -rf -- "$stage"; return 1
   }
   git -C "$stage" init -q -b main || { rm -rf -- "$stage"; return 1; }
@@ -186,7 +185,6 @@ loadout_repository_fetch_profile() {
     entry=$(repository_registry_get "$source" 2>/dev/null || true)
   fi
   if [[ -n $entry ]]; then
-    [[ $(jq -r '.type' <<<"$entry") == loadouts ]] || return 1
     root=$(jq -r '.path' <<<"$entry")
     configured_remote=$(jq -r '.remote' <<<"$entry")
     stored_source="${configured_remote:-$root}"
@@ -203,12 +201,12 @@ loadout_repository_fetch_profile() {
   fi
 
   repository_root_valid "$root" || return 1
-  repository_envelope_validate_file "$root/$MONTAGE_REPOSITORY_MANIFEST" loadouts || return 1
+  repository_envelope_validate_file "$root/$MONTAGE_REPOSITORY_MANIFEST" || return 1
   if [[ -n $entry ]]; then
     [[ $(jq -r '.id' <<<"$entry") == "$(jq -r '.id' "$root/$MONTAGE_REPOSITORY_MANIFEST")" ]] || return 1
   fi
   commit=$(repository_resolve_commit "$root" HEAD) || return 1
-  repository_materialize_history "$root" "$commit" loadouts || return 1
+  repository_materialize_history "$root" "$commit" || return 1
   history="$REPOSITORY_HISTORY_TREE"
   profile=$(repository_loadout_profile_path "$history" "$loadout_id") || {
     repository_history_release "$history"; return 1

@@ -132,7 +132,7 @@ theme_a_id=$(jq -r '.loadouts[] | select(.name == "Real scratch theme A") | .id'
   fail "removing the effective theme request did not activate the remaining request"
 "$mntg" loadout remove --yes "$theme_a_id" >/dev/null
 [[ $(<"$XDG_STATE_HOME/omarchy/current/theme.name") == tokyo-night ]] ||
-  fail "removing the final theme request did not restore the captured baseline"
+  fail "removing the final theme request did not return to the recorded baseline"
 pass "real headless Omarchy theme switching honors loadout precedence and baseline fallback"
 
 printf 'All real-machine scratch checks passed; scratch state was isolated at %s.\n' "$scratch"

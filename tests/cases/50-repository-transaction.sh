@@ -10,7 +10,7 @@ OUT=""
 
 repo="$SANDBOX/repository"
 mkdir -p "$repo/items/current"
-repository_envelope_json loadouts transaction-repo "2026-10-06T20:00:00Z" >"$repo/montage.json"
+repository_envelope_json transaction-repo "2026-10-06T20:00:00Z" >"$repo/montage.json"
 printf 'old\n' >"$repo/items/current/value"
 git -C "$repo" init -q -b main
 git -C "$repo" add -A
@@ -73,6 +73,17 @@ assert_equals "$(sha256sum "$repo/items/current/value")" "$before" \
 assert_no_file "$(repository_journal_path "$repo")" "failed validation creates no journal"
 rm -rf "$stage"
 
+# Malformed recovery paths never acquire filesystem authority.
+repository_stage_dir "$repo"
+stage="$REPOSITORY_STAGE"
+journal=$(repository_journal_path "$repo")
+repository_write_journal "$repo" prepared "$repo/items/current" "$stage/../escape" ""
+repository_recover_publication "$repo"; STATUS=$?
+assert_fails "recovery rejects staged path traversal"
+assert_file "$journal" "invalid recovery preserves its evidence"
+rm -f "$journal"
+rm -rf "$stage"
+
 # Interruption after the prior destination moves leaves an explicit journal.
 repository_stage_dir "$repo"
 stage="$REPOSITORY_STAGE"
@@ -89,3 +100,37 @@ assert_file_contains "$repo/items/current/value" "new" "recovery restores old co
 assert_no_file "$(repository_journal_path "$repo")" "recovery removes the journal"
 repository_worktree_clean "$repo"; STATUS=$?
 assert_ok "recovery returns the repository to its committed clean state"
+
+# Upgrade recovery uses literal schema-1 records, independent of today's writer.
+for field in backup original; do
+  for phase in prepared old-moved published; do
+    repository_stage_dir "$repo"
+    stage="$REPOSITORY_STAGE"
+    printf 'replacement\n' >"$stage/value"
+    recovery=$(mktemp -d "$repo/.montage-recovery.XXXXXX")
+    prior="$recovery/original"
+    if [[ $phase != prepared ]]; then mv "$repo/items/current" "$prior"; fi
+    if [[ $phase == published ]]; then mv "$stage" "$repo/items/current"; fi
+    journal=$(repository_journal_path "$repo")
+    jq -nc --arg field "$field" --arg state "$phase" --arg root "$repo" \
+      --arg target "$repo/items/current" --arg staged "$stage" --arg prior "$prior" \
+      '{schemaVersion:1,state:$state,root:$root,target:$target,staged:$staged} + {($field):$prior}' >"$journal"
+    repository_recover_publication "$repo"; STATUS=$?
+    assert_ok "$field schema-1 journal recovers $phase"
+    assert_file "$repo/items/current/value" "recovery retains an item"
+    assert_no_file "$journal" "recovery clears the $phase journal"
+    git -C "$repo" checkout -q -- items/current/value
+  done
+done
+
+outside="$SANDBOX/outside"
+mkdir -p "$outside"
+ln -s "$outside" "$repo/redirect"
+repository_stage_dir "$repo"
+stage="$REPOSITORY_STAGE"
+printf 'new\n' >"$stage/value"
+repository_publish_path "$repo" "$stage" redirect/new valid_staged; STATUS=$?
+assert_fails "publication refuses a symlinked destination parent"
+assert_no_file "$outside/new" "refusal writes nothing outside the library"
+assert_no_file "$(repository_journal_path "$repo")" "containment refusal creates no journal"
+rm -rf "$stage"

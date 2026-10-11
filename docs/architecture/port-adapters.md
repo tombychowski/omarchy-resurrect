@@ -1,125 +1,52 @@
-# Port adapter architecture
+# Ress loadout migration architecture
 
-Montage treats foreign artifacts as explicit interchange formats, not as
-alternate native storage. `mntg port FORMAT ...` selects one allowlisted
-adapter. The adapter may inspect and translate its format, but native loadout
-and vault readers never gain foreign-schema branches.
-
-The current public selector `ress` resolves to the stable format id `ress-v1`.
-`ress-v1` is also accepted directly. Every machine-readable result records the
-canonical id, never the shorthand.
-
-## Dependency direction
+Montage no longer has a general adapter or bidirectional port framework. The
+only foreign boundary is the frozen Ress v1 portable-loadout migration owned by
+two literal modules:
 
 ```text
-port/commands.sh --> port/adapter.sh --> adapter option/decision callbacks
-                         |
-                         +--> adapter format callbacks
-                         +--> adapter translation callbacks
-
-port/inspect.sh  --> report, destination, selection, history iteration
-port/import.sh   --> native selection, locks, staging, validation, commits, publication
-port/export.sh   --> exact native reads, staging, validation, publication
-        |
-        +--> port/common.sh
-        +--> repository / loadout / vault native primitives
-        +--> literal callbacks through port/adapter.sh
+bin/mntg
+  ├─ port/commands.sh   exact `port ress inspect|import loadout` parsing
+  └─ port/ress.sh       discovery, validation, result, decisions, staging
+             │
+             └─ loadout repository lock / journal / commit primitives
 ```
 
-The dependency direction is policy, not just organization:
+`bin/mntg` sources both files literally. User-controlled format or callback
+text never selects a file or function. `ress` is the only accepted format id;
+there is no `ress-v1` alias, future-format registry, dynamic callback matrix,
+export direction, vault translation, or history traversal.
 
-- `port/common.sh`, `port/inspect.sh`, `port/import.sh`, `port/export.sh`, and
-  `port/commands.sh` contain no Ress, predecessor, filename, or foreign-schema
-  knowledge.
-- Adapter selection initializes immutable descriptor facts, including the
-  canonical id and supported version. One literal `(format, callback)` matrix
-  in `port/adapter.sh` dispatches every later call; user-controlled text is
-  never interpolated into a function name.
-- An adapter validates and translates foreign semantics. It does not call Git
-  traversal, native repository selection or transaction, temporary staging,
-  confirmation, publication, or consumer-output functions.
-- Native readers do not call an adapter.
-- Dispatch is a literal allowlist. User input never becomes a function name,
-  source path, or sourced module name.
-- Modules are still loaded by the literal list in `bin/mntg`; no directory glob
-  discovers executable code.
+## Trust boundary
 
-## Shared lifecycle
+The migration reader accepts only a regular, non-symlink `profile.json`
+contained by the supplied regular directory, or that file itself. It validates
+JSON, integer schema 1, the exact declarative profile shape, bounded names,
+unique resources, public credential-free URLs, and commit pins using native
+profile validation. It opens no other source file. Sidecar content can produce
+only a bounded ignored-content warning.
 
-The shared engine owns behavior that must not vary by format:
+The source and destination remain separate authorities:
 
-1. validate the bounded format id and build one `montage-port-report`;
-2. prove source and destination are separate and the destination is absent or
-   explicitly empty;
-3. enumerate requested history and materialize each commit through the same
-   contained, envelope-neutral Git-object reader used by native history,
-   without archive extraction or checkout over the source;
-4. match each waivable loss by its exact code and refuse non-waivable safety or
-   authority loss;
-5. select exact native loadouts or backups for export and initialize native
-   repositories for import;
-6. own locks, recovery, staging, validation order, commit creation,
-   confirmation, and atomic publication; and
-7. project the same decision as human, JSON, or porcelain output.
+- Ress config, Git remotes, locks, operational state, claims, cleanup policy,
+  credentials, keys, and machine identity are never imported.
+- The destination is one configured loadout repository and one new stable id.
+- Preview is local and non-mutating.
+- Live import revalidates the source digest and profile after confirmation.
+- Publication uses the native repository identity lock, recovery journal,
+  same-filesystem stage, native leaf validator, and content-sensitive commit.
+- Applying the imported item later—not migration—creates local provenance and
+  cleanup authority from current machine observation.
 
-Recognizing a control file is not enough to authorize execution. Inspection
-may classify a standalone manifest for diagnostics, but shared planning marks
-it `incomplete-artifact`, supplies no mutations, and cannot import it. Missing
-format decisions likewise remain one incompatible `montage-port-report` in
-JSON mode rather than escaping into an unrelated prose error.
+## Decision and result ownership
 
-Native repository transactions remain authoritative when an import writes an
-item inside an existing Montage repository. The shared directory publisher is
-for a new standalone destination; it does not replace identity-scoped locks,
-journals, or repository validation.
+`port/ress.sh` builds the same versioned
+`montage-ress-loadout-migration` decision object for inspection, dry run, and
+live import. Ress and Montage self-plugin entries are reported separately and
+require `include` or `omit` when present. Safety or authority failures are
+refusals and cannot be converted into accepted loss.
 
-## Adapter responsibilities
-
-Each adapter owns:
-
-- one stable lowercase `format` id, including a version when versions are not
-  safely interchangeable;
-- accepted filenames, exact schema/version boundaries, field validation, and
-  artifact detection;
-- semantic inspection, format-specific warnings, loss codes, and self-product
-  identity decisions;
-- conversion callbacks between one validated foreign tree and one prepared
-  native stage, or one exact native tree and one prepared foreign stage;
-- validation of the staged foreign result;
-- format-specific import/export option values and decision rules; and
-- frozen fixtures plus current, future-version, hostile, lossy, history, and
-  round-trip evidence.
-
-An adapter does not own configuration roots, credentials, private keys, locks,
-restore progress, cleanup authority, history enumeration/materialization,
-native selection, repository setup, staging, commit creation, publication,
-generic confirmation, or the port report envelope. It cannot declare those
-losses waivable.
-
-## Adding another format
-
-For `other-v2`, add `lib/montage/port/adapters/other_v2/` with format and
-translation modules. Implement only the applicable callbacks declared in the
-literal matrix in `port/adapter.sh`: inspection facts, history-tree validation
-and timestamp, pre-translation validation, decision preparation, loss codes,
-translation, staged foreign validation, and format-only option handling.
-Then:
-
-1. add its literal modules to `MONTAGE_MODULES` and the reviewed dependency map;
-2. add explicit `other-v2` descriptor selection and `(format, callback)` cases
-   in `port/adapter.sh`;
-3. define its version boundary and loss codes in an OpenSpec capability or
-   delta without weakening the shared artifact-portability requirements;
-4. add frozen fixtures and a framework-conformance case in addition to
-   format-specific conversion tests;
-5. document its commands and any manual-copy fallback; and
-6. run the focused adapter cases, the full suite, and strict OpenSpec
-   validation.
-
-A new format does not implement inspection/report orchestration, destination
-checks, dry-run, history iteration, Git materialization, compatible-subset
-selection, mutation labels, common argument parsing, loss matching,
-confirmation, native selection, locks, repository
-setup, staging, native validation sequencing, commits, publication, or output.
-If a new format appears to need one of those, extend the shared engine contract
-through OpenSpec instead of hiding duplicated lifecycle policy in the adapter.
+Human, JSON, and porcelain views are projections of that object. Consumers do
+not inspect the source, invoke Git, or infer destination mutations themselves.
+A future foreign format or reverse conversion requires a new product decision
+and OpenSpec change rather than extension of an unused framework.

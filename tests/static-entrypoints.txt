@@ -1,16 +1,3 @@
-# Bash entrypoints reached through capture_$category / restore_$category.
-capture_config
-capture_omarchy
-capture_packages
-capture_plugins
-capture_secrets
-capture_webapps
-restore_config
-restore_omarchy
-restore_packages
-restore_plugins
-restore_secrets
-restore_webapps
 repository_envelope_json
 repository_envelope_validate_file
 repository_registry_get
@@ -29,7 +16,6 @@ repository_materialize_history
 repository_ref_valid
 repository_resolve_commit
 cmd_repository
-cmd_backup_history
 loadout_repository_catalog_json
 loadout_repository_initialize
 loadout_repository_item_json

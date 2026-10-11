@@ -5,42 +5,26 @@
   "version": "1.0.0",
   "author": "Tom Bychowski",
   "license": "MIT",
-  "description": "Capture and restore an Omarchy machine with private vault history, multi-loadout repositories, and explicit Ress v1 porting.",
+  "description": "Compose, share, apply, and reconcile portable Omarchy loadouts.",
   "homepage": "https://github.com/tombychowski/omarchy-montage",
   "kinds": [
-    "bar-widget",
-    "service"
+    "bar-widget"
   ],
   "entryPoints": {
-    "barWidget": "Panel.qml",
-    "service": "Service.qml"
+    "barWidget": "Panel.qml"
   },
   "barWidget": {
     "displayName": "Montage",
-    "description": "Backup freshness, native repository history, loadout composition, synchronization, and explicit restore or port handoff.",
+    "description": "Loadout libraries, composition, applied-state attention, and focused Ress migration.",
     "category": "System",
     "aliases": [
       "montage",
       "mntg",
-      "backup",
-      "restore"
+      "loadout"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
-    "defaults": {
-      "staleHours": 48
-    },
-    "schema": [
-      {
-        "key": "staleHours",
-        "type": "integer",
-        "label": "Call a backup stale after (hours)",
-        "min": 1,
-        "max": 720,
-        "step": 1,
-        "defaultValue": 48,
-        "description": "How old the last backup has to be before the bar icon dims."
-      }
-    ]
+    "defaults": {},
+    "schema": []
   }
 }

@@ -28,7 +28,7 @@ repository_loadout_profile_path() {
   local root="$1" id="$2"
   repository_id_valid "$id" || return 1
   repository_root_valid "$root" || return 1
-  repository_envelope_validate_file "$root/$MONTAGE_REPOSITORY_MANIFEST" loadouts || return 1
+  repository_envelope_validate_file "$root/$MONTAGE_REPOSITORY_MANIFEST" || return 1
   safe_control_file "$root" "loadouts/$id/profile.json"
 }
 
@@ -115,8 +115,7 @@ repository_materialize_git_tree() {
 # Reconstruct a native repository commit through the envelope-neutral object
 # reader, then apply native identity validation to the isolated tree.
 repository_materialize_history() {
-  local root="$1" ref="$2" expected_type="${3:-}" manifest tree
-  [[ -z $expected_type ]] || repository_type_valid "$expected_type" || return 1
+  local root="$1" ref="$2" manifest tree
   repository_root_valid "$root" || return 1
   repository_materialize_git_tree "$root" "$ref" || return 1
   tree="$REPOSITORY_HISTORY_TREE"
@@ -124,7 +123,7 @@ repository_materialize_history() {
     repository_history_release "$tree" >/dev/null 2>&1 || true
     return 1
   }
-  repository_envelope_validate_file "$manifest" "$expected_type" || {
+  repository_envelope_validate_file "$manifest" || {
     repository_history_release "$tree" >/dev/null 2>&1 || true
     return 1
   }

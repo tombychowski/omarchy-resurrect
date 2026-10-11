@@ -10,8 +10,8 @@ boundaries.
 ## Create and configure a library
 
 ```bash
-mntg repository init loadouts "$HOME/.local/share/montage/loadouts" --id personal-loadouts
-mntg repository configure personal "$HOME/.local/share/montage/loadouts" loadouts \
+mntg repository init "$HOME/.local/share/montage/loadouts" --id personal-loadouts
+mntg repository configure personal "$HOME/.local/share/montage/loadouts" \
   --remote https://github.com/example/personal-loadouts
 mntg repository list
 ```
@@ -148,6 +148,11 @@ Update re-resolves the same repository and stable item identity, then previews
 retained, added, conflicting, and withdrawn claims. Supplying another source is
 allowed only when it validates to those same immutable identities. Withdrawals
 use the removal preservation planner.
+
+Update dry-run preserves applied provenance and pending-operation records even
+when Git history advances without changing the profile. A changed-content
+library preview may save advisory update evidence for attention reporting;
+it does not replace the applied snapshot or mutate machine resources.
 
 ## Remove applied state
 

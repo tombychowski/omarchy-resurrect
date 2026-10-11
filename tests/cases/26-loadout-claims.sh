@@ -2,13 +2,15 @@ source "$TESTS_DIR/lib/loadout.sh"
 
 seed_machine
 machine_publish repo alpha beta gamma
-machine_install native alpha
+machine_install native alpha unrelated
 P1="$SANDBOX/claims-a"; P2="$SANDBOX/claims-b"
 write_package_loadout "$P1" First alpha beta
 write_package_loadout "$P2" Second alpha beta gamma
 
 apply_yes "$P1"
 assert_ok "first loadout is tracked"
+grep -qxF unrelated "$FAKE_STATE/native.txt" && _pass ||
+  _fail "additive apply preserves an unrelated installed package"
 apply_yes "$P2"
 assert_ok "overlapping second loadout is tracked"
 REGISTRY=$(registry_path)
@@ -24,6 +26,8 @@ mntg loadout remove --yes "$ID1"
 assert_ok "removing one claimant releases shared claims"
 grep -qxF beta "$FAKE_STATE/native.txt" && _pass || _fail "shared mntg package remains installed"
 grep -qxF alpha "$FAKE_STATE/native.txt" && _pass || _fail "protected pre-existing package remains installed"
+grep -qxF unrelated "$FAKE_STATE/native.txt" && _pass ||
+  _fail "loadout removal preserves an unrelated package"
 
 # Equivalent pinned integrations share one canonical resource and do not clone
 # again merely to add another claimant.

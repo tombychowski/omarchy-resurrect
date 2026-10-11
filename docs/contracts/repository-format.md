@@ -1,26 +1,12 @@
-# Montage repository envelope
+# Montage loadout-library repository
 
-Every native Montage repository has one root `montage.json`. The envelope
-identifies the container and selects its validator; it is not a portable
-loadout, a backup snapshot, an applied-state registry, or cleanup authority.
+Every native Montage repository is a multi-loadout Git library with one root
+`montage.json`. The envelope identifies the library; it is not a portable
+loadout, applied state, or cleanup authority.
 
-## Shared fields
+## Native envelope
 
-| Field | Contract |
-|---|---|
-| `schemaVersion` | JSON integer; currently exactly `1` |
-| `kind` | Exactly `montage-repository` |
-| `repositoryType` | Exactly `loadouts` or `vault` |
-| `id` | Stable 1–64 character lowercase id containing letters, digits, or interior hyphens; it begins and ends alphanumeric |
-| `createdAt` | UTC timestamp formatted `YYYY-MM-DDTHH:MM:SSZ` |
-
-Unknown, missing, or additional keys are rejected. An id is path-independent:
-moving a repository does not change it, while replacing a configured path with
-a repository carrying another id is detectable.
-
-## Loadout repository
-
-A schema-1 loadout envelope has exactly the shared fields:
+The envelope remains schema version 1 and has exactly these fields:
 
 ```json
 {
@@ -32,105 +18,125 @@ A schema-1 loadout envelope has exactly the shared fields:
 }
 ```
 
-Portable items live below `loadouts/<stable-id>/profile.json`; they are not
-embedded in this envelope.
+`schemaVersion` is the JSON integer `1`; `kind` and `repositoryType` are the
+fixed strings shown above. `id` is a stable 1–64 character lowercase id made
+from letters, digits, and interior hyphens. `createdAt` is a UTC timestamp in
+`YYYY-MM-DDTHH:MM:SSZ` form. Missing, additional, fractional, expression-like,
+or future values are rejected.
 
-## Vault repository
+A vault envelope, including one with `machineId`, is not a native Montage
+repository. Normal commands reject it before inspecting payload or history.
 
-A schema-1 vault envelope adds `machineId`, another bounded stable id naming
-the one machine lineage represented by the repository:
-
-```json
-{
-  "schemaVersion": 1,
-  "kind": "montage-repository",
-  "repositoryType": "vault",
-  "id": "vault-4a63d1",
-  "createdAt": "2026-10-06T20:00:00Z",
-  "machineId": "omarchy-laptop-12af"
-}
-```
-
-The envelope is present in each valid backup commit. Backup-specific capture
-metadata belongs in `backup.json`, not `montage.json`.
-
-## Validation boundary
-
-The CLI accepts only a regular, non-symlink `montage.json` with the exact
-schema and repository kind expected by the operation. A string, expression,
-fractional number, or future integer is not a schema version. Invalid ids are
-rejected before they can select a path or Git ref.
+Portable items live at `loadouts/<stable-id>/profile.json`. Moving a library
+does not change its id. Replacing a configured path with another id requires
+an explicit `--replace` after inspection.
 
 ## Configured repository registry
 
-Montage records named repositories in
-`${XDG_CONFIG_HOME:-~/.config}/montage/repositories.json`. Schema version 1 is
-an exact object containing `schemaVersion`, a non-negative integer `revision`,
-and a `repositories` array. Each repository entry contains exactly:
+Montage records named libraries at
+`${XDG_CONFIG_HOME:-~/.config}/montage/repositories.json`. The active document
+is schema version 2 and has exactly `schemaVersion`, a non-negative integer
+`revision`, and `repositories`:
+
+```json
+{
+  "schemaVersion": 2,
+  "revision": 9,
+  "repositories": [
+    {
+      "name": "personal",
+      "path": "/home/alex/.local/share/montage/loadouts",
+      "type": "loadouts",
+      "id": "personal-loadouts-7d8f",
+      "remote": "https://github.com/example/personal-loadouts"
+    }
+  ]
+}
+```
+
+Each entry has exactly:
 
 | Field | Contract |
 |---|---|
-| `name` | Unique bounded selector using the repository-id grammar |
+| `name` | Unique selector using the repository-id grammar |
 | `path` | Canonical absolute path to a non-symlink directory |
-| `type` | `loadouts` or `vault` |
-| `id` | Expected stable id read from the envelope when configured |
-| `remote` | Optional credential-free transport URL |
+| `type` | Fixed string `loadouts` |
+| `id` | Expected stable id from the native envelope |
+| `remote` | Optional credential-free Git transport URL |
 
-Changing a named entry to a repository with another id requires explicit
-replacement. The registry does not grant trust to its path: every operation
-revalidates the directory, envelope, expected kind, and expected id. Registry
-writes reread under the Montage configuration lock and atomically increment the
-revision. Removing an entry removes configuration only; it does not remove the
-user-owned repository.
+Entries serialize in name order. Every operation revalidates the directory,
+envelope, and expected id. Registry writes reread under the Montage
+configuration lock, increment the revision, validate a complete temporary
+document, and atomically replace the active file. Removing an entry changes
+configuration only; it never removes repository content.
 
-## Shared transaction boundary
+### Schema-1 migration
 
-One repository identity has one Montage state lock. Writers build a complete
-candidate below a same-filesystem staging directory and invoke the loadout- or
-vault-owned validator before moving the current destination. Publication uses
-an identity-scoped recovery journal below the Montage state root. An interrupted
-operation either restores the prior destination or finishes cleanup from the
-recorded state; it does not silently treat a partial tree as published.
+Schema 1 is recognized only at the configured-registry boundary. On first
+read, Montage holds the configuration lock, rereads and validates the whole
+legacy document, and fully validates every loadout entry. It classifies a
+legacy vault entry from its `type` field without opening that entry's path.
+Any invalid retained loadout aborts migration and names the entry; the active
+file remains unchanged.
 
-Git commits are created only when staged content changes. A clean-worktree
-precondition prevents repository writers from absorbing unrelated user edits.
-These mechanics do not define whether a loadout profile or backup is valid;
-the domain contract and validator remain authoritative for that payload.
+Before replacement, Montage creates this exact byte copy beside the registry:
 
-## Read and query boundary
+```text
+repositories.json.pre-schema2
+```
 
-Live controls are regular non-symlink files contained beneath the validated
-repository. Stable ids are validated before constructing item paths. User Git
-selectors are bounded ref names and resolve to one exact commit before use.
-Historical trees are reconstructed from Git objects into an isolated Montage
-state directory, reject unsupported object modes and escaping links, and
-validate their own `montage.json`; querying history never checks out over or
-dirties the configured working tree.
+The copy is a regular mode-0600 file, is never overwritten, and is inert during
+normal runtime. Montage then writes one schema-2 document containing the
+retained loadout entries in name order and increments the legacy revision once.
+Mixed, loadout-only, vault-only, and empty valid schema-1 documents follow the
+same rule. Concurrent readers serialize; an interruption before replacement
+leaves schema 1 and its rollback copy retryable.
 
-`mntg repository list`, `show`, and `validate` expose human-readable results or
-one versioned JSON document. `configure` and `remove` are the only commands in
-this surface that change the registry. These commands report invalid,
-missing, type-mismatched, and identity-mismatched repositories without asking
-the panel or another consumer to parse this file or inspect Git itself.
+Human commands print a concise first-read notice. JSON results carry a
+`migration` object with `performed`, `priorSchema`, `newSchema`,
+`retiredVaults`, and `backup`. Porcelain results use the versioned `MIGRATION`
+record documented in the [CLI protocol](cli-protocol.md). Reading schema 2 is
+a no-op. A vault entry hand-added to schema 2 is malformed active state, not
+another migration input.
 
-## Synchronization boundary
+To run a pre-change combined binary after code rollback, restore
+`repositories.json.pre-schema2` to `repositories.json` while holding the
+configuration lock. Repository content needs no rollback because registry
+migration does not modify any library or retired vault path.
 
-`mntg repository sync NAME` fetches into a Montage-owned observation ref and
-classifies the exact local and remote commits as `equal`, `local-ahead`,
-`remote-ahead`, or `divergent`. Inspection does not move the branch, index, or
-working tree. Human output and versioned JSON or porcelain results expose the
-repository id and kind, commits, ahead/behind counts, fetch status, requested
-action, performed action, and failure or decision reason.
+## Transaction and read boundaries
 
-An explicit `--pull` permits only a clean-worktree, validated fast-forward.
-An explicit `--push` permits only an ordinary non-forced push of unchanged
-local-ahead history. Equal history is a successful no-op; divergence is a
-decision, not an automatic merge. Montage never resets, rebases, merges
-content, or force-pushes to resolve divergence. See the
-[repository synchronization workflow](../workflows/repository-sync.md) for
-transport, credential-helper, visibility, and resolution guidance.
+One library identity has one Montage state lock. Writers build a complete
+candidate below a same-filesystem staging directory and run the loadout-item
+validator before publication. An identity-scoped recovery journal allows an
+interrupted publication to restore the prior item or finish exact cleanup.
+Git commits are created only for content changes, and a dirty worktree blocks
+publication.
 
-Implementation ownership and extension rules are documented in the
-[CLI module architecture](../architecture/cli-modules.md). Observable loadout,
-vault, synchronization, and port behavior remains owned by its corresponding
-OpenSpec capability and domain contract rather than being duplicated here.
+Publication validates the canonical target and every existing destination
+ancestor before creating directories or journals. Symlinked parents and
+non-directory ancestors are refused; recovery applies the same checks.
+Schema-1 publication journals retain the established `backup` field for the
+temporary prior item. The interim `original` spelling is also readable with
+identical strict path validation. Both describe transaction recovery content,
+not a Backup/Restore product; mixed or unfamiliar journal keys are rejected.
+
+Live controls are contained regular files. Stable ids are validated before
+constructing paths. Historical trees are reconstructed from Git objects into
+an isolated Montage state directory, reject unfamiliar modes and escaping
+links, and validate their schema-1 loadout envelope. History reads never check
+out over the configured worktree.
+
+## Commands and synchronization
+
+`mntg repository init PATH --id ID`, `configure NAME PATH`, `list`, `show`,
+`validate`, `loadouts`, `loadout`, `remove`, and `sync` operate only on loadout
+libraries. There is no repository-kind argument.
+
+Synchronization fetches into a Montage-owned observation ref and classifies
+the exact commits as `equal`, `local-ahead`, `remote-ahead`, or `divergent`.
+Inspection does not move the branch, index, or worktree. `--pull` permits only
+a validated clean-worktree fast-forward; `--push` permits only an ordinary
+non-forced push of unchanged local-ahead history. Equal history is a no-op and
+divergence requires a user decision. See the
+[repository synchronization workflow](../workflows/repository-sync.md).

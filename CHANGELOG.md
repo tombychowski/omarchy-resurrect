@@ -3,18 +3,23 @@
 ## Montage 1.0.0 — independent release
 
 - Publishes the separate `tombychowski.montage` Omarchy plugin and `mntg` CLI.
-- Owns Montage-specific XDG roots, native repository envelopes, stable loadout
-  libraries, immutable vault history, and conservative Git synchronization.
-- Adds explicit Ress v1 inspection, import, and disposable export between
-  separate paths; there is no shared live state or compatibility command alias.
-- Replaces the panel with Montage repository, history, sync, settings, Share,
-  applied-loadout, retention, and port consumer surfaces.
+- Defines Montage as a loadout-only product: constrained portable profiles,
+  stable loadout libraries, exact applied provenance, and conservative Git
+  synchronization.
+- Adds focused Ress v1 loadout inspection and import between separate paths;
+  there is no shared live state, reverse conversion, or compatibility alias.
+- Replaces the panel with Libraries, Compose/Share, and Applied Loadouts backed
+  only by versioned `mntg` results.
+- Removes Montage backup, restore, secret transport, scheduling, private
+  repository, and machine-history behavior and its active documentation.
 - Preserves the historical entries below as records of the predecessor fork;
   they are not current Montage installation or command guidance.
 
 Newest first. The version here is the one in `manifest.json` and in
-`ress --version`; the plugin id stays `tsouth89.resurrect` whatever the version,
-for the reason in the README.
+`mntg --version`; the plugin id is `tombychowski.montage`.
+
+The entries below are retained predecessor history. Their commands and product
+promises do not describe the current Montage release.
 
 ## 1.2.0
 

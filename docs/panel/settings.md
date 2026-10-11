@@ -1,26 +1,15 @@
 # Panel settings
 
-The **Repository settings** section registers existing native Montage
-repositories. It collects a bounded name, absolute location, repository type
-(`loadouts` or `vault`), and optional credential-free Git remote.
+The only persistent product setting is `AUR=ask|yes|no`. The Applied Loadouts
+surface cycles it through `mntg set`, whose locked read-modify-write preserves
+the ordered configuration and omits obsolete keys on the next save.
 
-Saving opens the CLI flow:
+Library form fields are operation inputs, not a second settings store. The
+panel opens `mntg repository configure NAME PATH [--remote URL]` in a terminal.
+The CLI validates canonical path, fixed loadout-library envelope, stable
+identity, and credential-free remote before replacing registry state.
 
-```text
-mntg repository configure NAME PATH TYPE --remote URL --replace
-```
-
-The panel does not edit the repository registry. `mntg` validates the native
-envelope and stable id, strips URL credentials again, takes the dedicated
-configuration lock, re-reads under the lock, and serializes the update. A
-known-public vault remote retains its interactive warning and confirmation.
-
-Ress paths are excluded from live Montage settings. **Port from Ress** accepts
-a read-only source and a separate Montage destination, then calls **Preview
-Ress port**. Only a compatible CLI report enables **Publish port in terminal**.
-The source is never adopted as Montage configuration, and no shared-directory
-mode is offered.
-
-Capture category, schedule, AUR, and user-service settings continue through
-`mntg set KEY=VALUE`; QML never rewrites the config file. AUR and service policy
-remain three-state choices: asks first, proceeds without asking, or never.
+Ress source and decision fields are in-memory migration inputs. They are never
+stored as library settings or adopted as native ownership. Inspection is
+read-only; confirmed publication targets the selected configured library and a
+new stable item id.

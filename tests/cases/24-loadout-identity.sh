@@ -39,9 +39,9 @@ assert_no_output "TOKEN@" "credentials are never printed"
 # repository/item provenance beside the validated snapshot.
 machine_publish repo gamma delta epsilon
 LIBRARY="$SANDBOX/app-library"
-mntg repository init loadouts "$LIBRARY" --id app-library --json
+mntg repository init "$LIBRARY" --id app-library --json
 assert_ok "repository apply fixture initializes"
-mntg repository configure apps "$LIBRARY" loadouts --json
+mntg repository configure apps "$LIBRARY" --json
 assert_ok "repository apply fixture is configured"
 write_package_loadout "$SANDBOX/gamma-source" "Repository Gamma" gamma
 write_package_loadout "$SANDBOX/beta-source" "Repository Beta" epsilon
@@ -105,6 +105,92 @@ mntg apply --yes apps --loadout beta
 assert_ok "a second stable selector from the same repository applies independently"
 jq -e '[.loadouts[]|select(.repositoryId=="app-library")|.loadoutId]|sort==["beta","gamma"]' \
   "$(registry_path)" >/dev/null && _pass || _fail "repository selectors remain distinct" "$(cat "$(registry_path)")"
+
+# Pinned integration definitions remain bound to the same repository/item
+# identity through check, repair, a metadata-only repository update, and
+# removal. Repair must reinstall the exact requested commits, never branch tips.
+PIN_PLUGIN_1=$(seed_remote plugin pinned-plugin acme.pinned)
+PIN_THEME_1=$(seed_remote theme pinned-theme)
+PIN_SOURCE="$SANDBOX/pinned-source"
+mkdir -p "$PIN_SOURCE" "$LIBRARY/loadouts/pinned"
+jq -n --arg purl "$(remote_url pinned-plugin)" --arg psha "$PIN_PLUGIN_1" \
+  --arg turl "$(remote_url pinned-theme)" --arg tsha "$PIN_THEME_1" '
+  {schemaVersion:1,kind:"omarchy-loadout",name:"Pinned lifecycle",author:"A",description:"first",
+   createdAt:"2026-01-01T00:00:00Z",omarchy:"4",packages:{native:[],aur:[]},
+   plugins:[{id:"acme.pinned",url:$purl,commit:$psha}],webapps:[],
+   theme:{name:"pinned-theme",url:$turl,commit:$tsha}}' >"$PIN_SOURCE/profile.json"
+cp "$PIN_SOURCE/profile.json" "$LIBRARY/loadouts/pinned/profile.json"
+git -C "$LIBRARY" add -A
+git -C "$LIBRARY" commit -q -m pinned-lifecycle
+PIN_REPOSITORY_COMMIT_1=$(git -C "$LIBRARY" rev-parse HEAD)
+machine_builtin_theme baseline
+mkdir -p "$HOME/.local/state/omarchy/current"
+ln -s "$OMARCHY_PATH/themes/baseline" "$HOME/.local/state/omarchy/current/theme"
+
+mntg apply --yes apps --loadout pinned
+assert_ok "pinned repository loadout applies"
+PIN_LOCAL=$(jq -r '.loadouts[]|select(.repositoryId=="app-library" and .loadoutId=="pinned")|.id' "$(registry_path)")
+jq -e --arg id "$PIN_LOCAL" --arg commit "$PIN_REPOSITORY_COMMIT_1" \
+  --arg psha "$PIN_PLUGIN_1" --arg tsha "$PIN_THEME_1" '
+  (.loadouts[]|select(.id==$id)|
+    .repositoryId=="app-library" and .loadoutId=="pinned" and .commit==$commit) and
+  (.resources[]|select(.id=="plugin:acme.pinned")|.definition.commit==$psha) and
+  (.resources[]|select(.id=="theme-install:pinned-theme")|.definition.commit==$tsha) and
+  (.claims[]|select(.loadoutId==$id and .resourceId=="plugin:acme.pinned")|.requested.commit==$psha) and
+  (.claims[]|select(.loadoutId==$id and .resourceId=="theme-install:pinned-theme")|.requested.commit==$tsha)
+' "$(registry_path)" >/dev/null && _pass ||
+  _fail "apply stores exact repository, loadout, commit, and resource pins" "$(cat "$(registry_path)")"
+assert_equals "$(git -C "$HOME/.config/omarchy/plugins/acme.pinned" rev-parse HEAD)" "$PIN_PLUGIN_1" \
+  "apply checks out the exact plugin pin"
+assert_equals "$(git -C "$HOME/.config/omarchy/themes/pinned-theme" rev-parse HEAD)" "$PIN_THEME_1" \
+  "apply checks out the exact theme pin"
+
+PIN_STATE_BEFORE_CHECK=$(sha256sum "$(registry_path)")
+mntg loadout check "$PIN_LOCAL" --json
+assert_ok "pinned repository loadout checks healthy"
+assert_equals "$(sha256sum "$(registry_path)")" "$PIN_STATE_BEFORE_CHECK" \
+  "check preserves immutable provenance and pins"
+
+rm -rf "$HOME/.config/omarchy/plugins/acme.pinned" "$HOME/.config/omarchy/themes/pinned-theme"
+mntg loadout repair --yes "$PIN_LOCAL"
+assert_ok "repair reinstalls missing pinned integrations"
+assert_equals "$(git -C "$HOME/.config/omarchy/plugins/acme.pinned" rev-parse HEAD)" "$PIN_PLUGIN_1" \
+  "repair restores the exact plugin pin"
+assert_equals "$(git -C "$HOME/.config/omarchy/themes/pinned-theme" rev-parse HEAD)" "$PIN_THEME_1" \
+  "repair restores the exact theme pin"
+jq -e --arg id "$PIN_LOCAL" --arg commit "$PIN_REPOSITORY_COMMIT_1" \
+  '.loadouts[]|select(.id==$id)|.repositoryId=="app-library" and .loadoutId=="pinned" and .commit==$commit' \
+  "$(registry_path)" >/dev/null && _pass ||
+  _fail "repair preserves repository/item/commit provenance" "$(cat "$(registry_path)")"
+
+jq '.name="Pinned lifecycle updated" | .description="metadata only"' \
+  "$LIBRARY/loadouts/pinned/profile.json" >"$LIBRARY/loadouts/pinned/next"
+mv "$LIBRARY/loadouts/pinned/next" "$LIBRARY/loadouts/pinned/profile.json"
+git -C "$LIBRARY" add -A
+git -C "$LIBRARY" commit -q -m pinned-metadata-update
+PIN_REPOSITORY_COMMIT_2=$(git -C "$LIBRARY" rev-parse HEAD)
+mntg loadout update --yes "$PIN_LOCAL" apps
+assert_ok "explicit repository update retains stable identities and pins"
+jq -e --arg id "$PIN_LOCAL" --arg commit "$PIN_REPOSITORY_COMMIT_2" \
+  --arg psha "$PIN_PLUGIN_1" --arg tsha "$PIN_THEME_1" '
+  (.loadouts[]|select(.id==$id)|
+    .repositoryId=="app-library" and .loadoutId=="pinned" and .commit==$commit and
+    .name=="Pinned lifecycle updated") and
+  (.resources[]|select(.id=="plugin:acme.pinned")|.definition.commit==$psha) and
+  (.resources[]|select(.id=="theme-install:pinned-theme")|.definition.commit==$tsha)
+' "$(registry_path)" >/dev/null && _pass ||
+  _fail "update advances only repository commit and metadata while retaining pins" "$(cat "$(registry_path)")"
+
+mntg loadout remove --yes "$PIN_LOCAL"
+assert_ok "pinned repository loadout removes through its exact stored claims"
+jq -e --arg id "$PIN_LOCAL" '
+  (any(.loadouts[]; .id==$id)|not) and
+  (any(.claims[]; .loadoutId==$id)|not) and
+  (any(.resources[]; .id=="plugin:acme.pinned" or .id=="theme-install:pinned-theme")|not)
+' "$(registry_path)" >/dev/null && _pass ||
+  _fail "remove clears only the selected provenance and pinned resources" "$(cat "$(registry_path)")"
+assert_no_file "$HOME/.config/omarchy/plugins/acme.pinned" "remove deletes the exact pinned plugin target"
+assert_no_file "$HOME/.config/omarchy/themes/pinned-theme" "remove deletes the exact pinned theme target"
 
 # The same contract applies after a remote clone: transport credentials are
 # absent from state and the selected default-branch commit is pinned.

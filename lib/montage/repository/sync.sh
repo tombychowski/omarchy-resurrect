@@ -5,22 +5,6 @@
 # resets, merges, or changes repository content.
 
 REPOSITORY_SYNC_RESULT=""
-REPOSITORY_REMOTE_VISIBILITY="unknown"
-
-repository_remote_visibility() {
-  local remote="$1" public_url visibility
-  REPOSITORY_REMOTE_VISIBILITY=unknown
-  public_url=$(canonical_share_url "$remote" 2>/dev/null) || return 0
-  [[ $public_url == https://github.com/* ]] || return 0
-  have gh || return 0
-  visibility=$(gh repo view "$public_url" --json visibility --jq .visibility 2>/dev/null) || return 0
-  case "${visibility,,}" in
-    public) REPOSITORY_REMOTE_VISIBILITY=public ;;
-    private) REPOSITORY_REMOTE_VISIBILITY=private ;;
-    internal) REPOSITORY_REMOTE_VISIBILITY=internal ;;
-    *) REPOSITORY_REMOTE_VISIBILITY=unknown ;;
-  esac
-}
 
 repository_sync_result_json() {
   local entry="$1" status="$2" local_commit="$3" remote_commit="$4"

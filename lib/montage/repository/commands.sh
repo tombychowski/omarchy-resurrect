@@ -5,7 +5,7 @@
 # the registry directly.
 
 repository_inspect_path_json() {
-  local name="$1" path="$2" expected_type="${3:-}" expected_id="${4:-}" remote="${5:-}"
+  local name="$1" path="$2" expected_id="${3:-}" remote="${4:-}"
   local status=healthy valid=true canonical="" envelope=null current_type="" current_id=""
 
   if [[ $path != /* || ! -d $path || -L $path ]]; then
@@ -16,16 +16,14 @@ repository_inspect_path_json() {
     status=invalid-envelope; valid=false
   else
     envelope=$(<"$path/$MONTAGE_REPOSITORY_MANIFEST")
-    current_type=$(jq -r '.repositoryType' <<<"$envelope")
+    current_type=loadouts
     current_id=$(jq -r '.id' <<<"$envelope")
-    if [[ -n $expected_type && $current_type != "$expected_type" ]]; then
-      status=type-mismatch; valid=false
-    elif [[ -n $expected_id && $current_id != "$expected_id" ]]; then
+    if [[ -n $expected_id && $current_id != "$expected_id" ]]; then
       status=identity-mismatch; valid=false
     fi
   fi
 
-  jq -nc --arg name "$name" --arg path "$path" --arg type "$expected_type" \
+  jq -nc --arg name "$name" --arg path "$path" --arg type loadouts \
     --arg id "$expected_id" --arg remote "$remote" --arg status "$status" \
     --arg currentType "$current_type" --arg currentId "$current_id" \
     --argjson valid "$valid" --argjson envelope "$envelope" '
@@ -38,21 +36,23 @@ repository_inspect_entry_json() {
   repository_inspect_path_json \
     "$(jq -r '.name' <<<"$entry")" \
     "$(jq -r '.path' <<<"$entry")" \
-    "$(jq -r '.type' <<<"$entry")" \
     "$(jq -r '.id' <<<"$entry")" \
     "$(jq -r '.remote' <<<"$entry")"
 }
 
 repository_catalog_json() {
-  local entry inspected items='[]'
-  repository_registry_load || return 1
+  local mode="${1:-ordinary}" entry inspected items='[]'
+  if [[ $mode == status ]]; then repository_registry_load_for_status || return 1
+  else repository_registry_load || return 1
+  fi
   while IFS= read -r entry; do
     inspected=$(repository_inspect_entry_json "$entry") || return 1
     items=$(jq -nc --argjson items "$items" --argjson item "$inspected" '$items + [$item]') || return 1
   done < <(jq -c '.repositories[]' <<<"$REPOSITORY_REGISTRY")
   jq -nc --argjson revision "$(jq -r '.revision' <<<"$REPOSITORY_REGISTRY")" \
-    --argjson repositories "$items" \
-    '{schemaVersion:1,kind:"montage-repository-list",revision:$revision,repositories:$repositories}'
+    --argjson repositories "$items" --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
+    '{schemaVersion:1,kind:"montage-repository-list",revision:$revision,
+      repositories:$repositories,migration:$migration}'
 }
 
 repository_print_human() {
@@ -87,6 +87,7 @@ cmd_repository_list() {
     printf '%s\n' "$catalog"
     return
   fi
+  repository_migration_print_human "$(jq -c '.migration' <<<"$catalog")"
   if [[ $(jq -r '.repositories | length' <<<"$catalog") == 0 ]]; then
     printf 'No Montage repositories are configured.\n'
     return
@@ -103,9 +104,11 @@ cmd_repository_show() {
   entry=$(repository_registry_get "$name") || die "repository is not configured: $name"
   item=$(repository_inspect_entry_json "$entry") || die "could not inspect repository: $name"
   if (( REPOSITORY_COMMAND_JSON )); then
-    jq -nc --argjson repository "$item" \
-      '{schemaVersion:1,kind:"montage-repository-show",repository:$repository}'
+    jq -nc --argjson repository "$item" --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
+      '{schemaVersion:1,kind:"montage-repository-show",repository:$repository,
+        migration:$migration}'
   else
+    repository_migration_print_human "$REPOSITORY_REGISTRY_MIGRATION"
     repository_print_human "$item"
     printf '  expected id: %s\n' "$(jq -r '.id' <<<"$item")"
     [[ $(jq -r '.currentId' <<<"$item") == "" ]] ||
@@ -116,40 +119,33 @@ cmd_repository_show() {
 
 cmd_repository_validate() {
   repository_command_json_flag "$@"
-  local expected_type="" target="" index=0 arg entry item name=""
+  local target="" index=0 arg entry item name=""
   while (( index < ${#REPOSITORY_COMMAND_ARGS[@]} )); do
     arg="${REPOSITORY_COMMAND_ARGS[index]}"
     case "$arg" in
-      --type)
-        index=$((index + 1)); expected_type="${REPOSITORY_COMMAND_ARGS[index]:-}"
-        repository_type_valid "$expected_type" || die "--type must be loadouts or vault"
-        ;;
-      --type=*)
-        expected_type="${arg#*=}"; repository_type_valid "$expected_type" || die "--type must be loadouts or vault"
-        ;;
-      *) [[ -z $target ]] || die "usage: mntg repository validate NAME|PATH [--type TYPE] [--json]"; target="$arg" ;;
+      --type|--type=*) die "repository kinds are not configurable; Montage accepts loadout libraries only" ;;
+      *) [[ -z $target ]] || die "usage: mntg repository validate NAME|PATH [--json]"; target="$arg" ;;
     esac
     index=$((index + 1))
   done
-  [[ -n $target ]] || die "usage: mntg repository validate NAME|PATH [--type TYPE] [--json]"
+  [[ -n $target ]] || die "usage: mntg repository validate NAME|PATH [--json]"
 
   if [[ $target == /* ]]; then
-    item=$(repository_inspect_path_json "" "$target" "$expected_type" "" "") ||
+    item=$(repository_inspect_path_json "" "$target" "" "") ||
       die "could not inspect repository path"
   else
     repository_registry_load || die "repository configuration is malformed or unsupported"
     entry=$(repository_registry_get "$target") || die "repository is not configured: $target"
     name="$target"
-    if [[ -n $expected_type && $(jq -r '.type' <<<"$entry") != "$expected_type" ]]; then
-      entry=$(jq -c --arg type "$expected_type" '.type=$type' <<<"$entry")
-    fi
     item=$(repository_inspect_entry_json "$entry") || die "could not inspect repository: $name"
   fi
 
   if (( REPOSITORY_COMMAND_JSON )); then
-    jq -nc --argjson repository "$item" \
-      '{schemaVersion:1,kind:"montage-repository-validation",repository:$repository}'
+    jq -nc --argjson repository "$item" --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
+      '{schemaVersion:1,kind:"montage-repository-validation",repository:$repository,
+        migration:$migration}'
   else
+    repository_migration_print_human "$REPOSITORY_REGISTRY_MIGRATION"
     repository_print_human "$item"
   fi
   jq -e '.valid' <<<"$item" >/dev/null
@@ -157,7 +153,7 @@ cmd_repository_validate() {
 
 cmd_repository_configure() {
   repository_command_json_flag "$@"
-  local name="" path="" type="" remote="" replace="" index=0 arg rc entry item visibility=unknown
+  local name="" path="" remote="" replace="" index=0 arg rc entry item
   while (( index < ${#REPOSITORY_COMMAND_ARGS[@]} )); do
     arg="${REPOSITORY_COMMAND_ARGS[index]}"
     case "$arg" in
@@ -169,43 +165,30 @@ cmd_repository_configure() {
       *)
         if [[ -z $name ]]; then name="$arg"
         elif [[ -z $path ]]; then path="$arg"
-        elif [[ -z $type ]]; then type="$arg"
-        else die "usage: mntg repository configure NAME PATH TYPE [--remote URL] [--replace] [--json]"
+        else die "usage: mntg repository configure NAME PATH [--remote URL] [--replace] [--json]"
         fi
         ;;
     esac
     index=$((index + 1))
   done
-  [[ -n $name && -n $path && -n $type ]] ||
-    die "usage: mntg repository configure NAME PATH TYPE [--remote URL] [--replace] [--json]"
+  [[ -n $name && -n $path ]] ||
+    die "usage: mntg repository configure NAME PATH [--remote URL] [--replace] [--json]"
   remote=$(strip_credentials "$remote")
   [[ -z $remote ]] || valid_git_remote "$remote" || die "repository remote is unsafe or malformed"
-  if [[ $type == vault && -n $remote ]]; then
-    repository_remote_visibility "$remote"
-    visibility="$REPOSITORY_REMOTE_VISIBILITY"
-    if [[ $visibility == public ]]; then
-      (( REPOSITORY_COMMAND_JSON )) ||
-        printf 'Warning: this GitHub repository is public. A Montage vault contains personal configuration, inventory, host evidence, and possibly encrypted-secret ciphertext.\n' >&2
-      confirm "Configure this known-public repository for private vault storage?" || die "cancelled"
-    fi
-  fi
-  if repository_registry_put "$name" "$path" "$type" "$remote" "$replace"; then rc=0; else rc=$?; fi
+  if repository_registry_put "$name" "$path" "$remote" "$replace"; then rc=0; else rc=$?; fi
   if (( rc == 2 )); then die "repository identity changed; repeat with --replace after inspection"; fi
   (( rc == 0 )) || die "repository configuration was refused"
   repository_registry_load || die "could not reload repository configuration"
   entry=$(repository_registry_get "$name") || die "configured repository disappeared"
   item=$(repository_inspect_entry_json "$entry") || die "could not inspect configured repository"
   if (( REPOSITORY_COMMAND_JSON )); then
-    jq -nc --argjson repository "$item" --arg visibility "$visibility" \
+    jq -nc --argjson repository "$item" --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
       '{schemaVersion:1,kind:"montage-repository-configured",repository:$repository,
-        visibility:$visibility,
-        warning:(if $visibility == "public" then
-          "Public vault storage can expose personal backup metadata and encrypted-secret ciphertext."
-          else null end)}'
+        migration:$migration}'
   else
+    repository_migration_print_human "$REPOSITORY_REGISTRY_MIGRATION"
     printf 'Configured Montage repository:\n'
     repository_print_human "$item"
-    [[ $type != vault || -z $remote ]] || printf '  visibility: %s\n' "$visibility"
   fi
 }
 
@@ -215,8 +198,10 @@ cmd_repository_remove() {
   local name="${REPOSITORY_COMMAND_ARGS[0]}"
   repository_registry_remove "$name" || die "repository is not configured: $name"
   if (( REPOSITORY_COMMAND_JSON )); then
-    jq -nc --arg name "$name" '{schemaVersion:1,kind:"montage-repository-removed",name:$name}'
+    jq -nc --arg name "$name" --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
+      '{schemaVersion:1,kind:"montage-repository-removed",name:$name,migration:$migration}'
   else
+    repository_migration_print_human "$REPOSITORY_REGISTRY_MIGRATION"
     printf 'Removed repository configuration %s. Repository content was not changed.\n' "$name"
   fi
 }
@@ -239,43 +224,44 @@ cmd_repository_sync() {
     repository_sync_classify "$entry" || rc=$?
     REPOSITORY_SYNC_RESULT=$(repository_sync_with_action_json "$REPOSITORY_SYNC_RESULT" preview fetch "$([[ $rc == 0 ]] && printf true || printf false)" "$([[ $rc == 0 ]] || printf classification-failed)")
   else
-    case "$(jq -r '.type' <<<"$entry")" in
-      loadouts) validator=loadout_repository_history_valid ;;
-      vault) validator=vault_repository_history_valid ;;
-      *) die "repository type is unsupported" ;;
-    esac
+    validator=loadout_repository_history_valid
     repository_sync_apply "$entry" "$action" "$validator" || rc=$?
     if ! jq -e '.action' <<<"$REPOSITORY_SYNC_RESULT" >/dev/null 2>&1; then
       REPOSITORY_SYNC_RESULT=$(repository_sync_with_action_json \
         "$REPOSITORY_SYNC_RESULT" "$action" fetch false classification-failed)
     fi
   fi
+  REPOSITORY_SYNC_RESULT=$(jq -c --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
+    '. + {migration:$migration}' <<<"$REPOSITORY_SYNC_RESULT") || return 1
   if (( PORCELAIN )); then
     emit "BEGIN|sync|$(jq -r '.repositoryId' <<<"$REPOSITORY_SYNC_RESULT")|$(jq -r '.repositoryType' <<<"$REPOSITORY_SYNC_RESULT")"
+    repository_migration_emit_porcelain "$REPOSITORY_REGISTRY_MIGRATION"
     emit "SYNC|1|$(jq -r '[.status,(.ahead|tostring),(.behind|tostring),(.fetch.ok|tostring),(.action.performed // "none"),(.action.ok|tostring),(.action.reason // "")] | join("|")' <<<"$REPOSITORY_SYNC_RESULT")"
     if (( rc == 0 )); then emit "DONE|ok|synchronization complete"
     elif (( rc == 3 )); then emit "DONE|decision|required"
     else emit "DONE|fail|synchronization failed"; fi
   elif (( as_json )); then printf '%s\n' "$REPOSITORY_SYNC_RESULT"
-  else repository_sync_print_human "$REPOSITORY_SYNC_RESULT"; fi
+  else
+    repository_migration_print_human "$REPOSITORY_REGISTRY_MIGRATION"
+    repository_sync_print_human "$REPOSITORY_SYNC_RESULT"
+  fi
   (( rc == 0 )) || return "$rc"
 }
 
 cmd_repository_initialize() {
   repository_command_json_flag "$@"
-  local type="${REPOSITORY_COMMAND_ARGS[0]:-}" path="${REPOSITORY_COMMAND_ARGS[1]:-}"
-  local id="" index=2 arg envelope
-  [[ $type == loadouts ]] || die "usage: mntg repository init loadouts PATH --id ID [--json]"
+  local path="${REPOSITORY_COMMAND_ARGS[0]:-}"
+  local id="" index=1 arg envelope
   while (( index < ${#REPOSITORY_COMMAND_ARGS[@]} )); do
     arg="${REPOSITORY_COMMAND_ARGS[index]}"
     case "$arg" in
       --id) index=$((index + 1)); id="${REPOSITORY_COMMAND_ARGS[index]:-}" ;;
       --id=*) id="${arg#*=}" ;;
-      *) die "usage: mntg repository init loadouts PATH --id ID [--json]" ;;
+      *) die "usage: mntg repository init PATH --id ID [--json]" ;;
     esac
     index=$((index + 1))
   done
-  [[ -n $path && -n $id ]] || die "usage: mntg repository init loadouts PATH --id ID [--json]"
+  [[ -n $path && -n $id ]] || die "usage: mntg repository init PATH --id ID [--json]"
   loadout_repository_initialize "$path" "$id" || die "could not initialize loadout repository"
   envelope=$(<"$path/$MONTAGE_REPOSITORY_MANIFEST")
   if (( REPOSITORY_COMMAND_JSON )); then
@@ -291,12 +277,16 @@ cmd_repository_loadouts() {
   (( ${#REPOSITORY_COMMAND_ARGS[@]} == 1 )) ||
     die "usage: mntg repository loadouts NAME|PATH [--json]"
   local catalog item
-  catalog=$(loadout_repository_catalog_json "${REPOSITORY_COMMAND_ARGS[0]}") ||
+  loadout_repository_resolve "${REPOSITORY_COMMAND_ARGS[0]}" ||
     die "loadout repository is invalid or unavailable"
+  catalog=$(loadout_repository_catalog_json "$LOADOUT_REPOSITORY_PATH") ||
+    die "loadout repository is invalid or unavailable"
+  catalog=$(jq -c --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" '. + {migration:$migration}' <<<"$catalog")
   if (( REPOSITORY_COMMAND_JSON )); then
     printf '%s\n' "$catalog"
     return
   fi
+  repository_migration_notice
   printf 'Loadouts in %s:\n' "$(jq -r '.repositoryId' <<<"$catalog")"
   if [[ $(jq -r '.items | length' <<<"$catalog") == 0 ]]; then printf '  (none)\n'; fi
   while IFS= read -r item; do
@@ -317,13 +307,16 @@ cmd_repository_loadout() {
   shift 3
   repository_command_json_flag "$@"
   local item name="" description="" index=0 arg
+  loadout_repository_resolve "$selector" || die "loadout repository is invalid or unavailable"
+  (( REPOSITORY_COMMAND_JSON )) || repository_migration_notice
   case "$action" in
     show)
       (( ${#REPOSITORY_COMMAND_ARGS[@]} == 0 )) ||
         die "usage: mntg repository loadout show NAME|PATH ID [--json]"
       item=$(loadout_repository_item_json "$selector" "$id") || die "loadout item is invalid or unavailable: $id"
       if (( REPOSITORY_COMMAND_JSON )); then
-        jq -nc --argjson item "$item" '{schemaVersion:1,kind:"montage-loadout-show",item:$item}'
+        jq -nc --argjson item "$item" --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
+          '{schemaVersion:1,kind:"montage-loadout-show",item:$item,migration:$migration}'
       else
         printf '%s [%s]\n%s\ndigest: %s\n' "$(jq -r '.name' <<<"$item")" "$id" \
           "$(jq -r '.description' <<<"$item")" "$(jq -r '.digest' <<<"$item")"
@@ -347,7 +340,8 @@ cmd_repository_loadout() {
       item=$(loadout_repository_rename "$selector" "$id" "$name" "$description") ||
         die "loadout rename was refused"
       if (( REPOSITORY_COMMAND_JSON )); then
-        jq -nc --argjson item "$item" '{schemaVersion:1,kind:"montage-loadout-renamed",item:$item}'
+        jq -nc --argjson item "$item" --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" \
+          '{schemaVersion:1,kind:"montage-loadout-renamed",item:$item,migration:$migration}'
       else
         printf 'Renamed loadout %s to %s; its stable id and path are unchanged.\n' "$id" "$name"
       fi

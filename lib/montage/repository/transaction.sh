@@ -27,6 +27,21 @@ repository_relative_path_valid() {
   done
 }
 
+# Validate before creating parents: lexical containment alone follows symlinks.
+repository_destination_valid() {
+  local root="$1" relative="$2" target parent canonical
+  repository_root_valid "$root" || return 1
+  repository_relative_path_valid "$relative" || return 1
+  target="$root/$relative"
+  canonical=$(realpath -m -- "$target") || return 1
+  [[ $canonical == "$target" && ! -L $target ]] || return 1
+  parent=$(dirname "$target")
+  while [[ $parent != "$root" ]]; do
+    [[ ! -L $parent && ( ! -e $parent || -d $parent ) ]] || return 1
+    parent=$(dirname "$parent")
+  done
+}
+
 repository_lock_path() {
   local root="$1" id
   repository_root_valid "$root" || return 1
@@ -75,13 +90,13 @@ repository_journal_path() {
 }
 
 repository_write_journal() {
-  local root="$1" state="$2" target="$3" staged="$4" backup="$5" journal tmp
+  local root="$1" state="$2" target="$3" staged="$4" original="$5" journal tmp
   journal=$(repository_journal_path "$root") || return 1
   private_dir "$(dirname "$journal")"
   montage_make_temp_file "$(dirname "$journal")/.journal.XXXXXX" || return 1
   tmp="$MONTAGE_TEMP_PATH"
   jq -nc --arg state "$state" --arg root "$root" --arg target "$target" \
-    --arg staged "$staged" --arg backup "$backup" \
+    --arg staged "$staged" --arg backup "$original" \
     '{schemaVersion:1,state:$state,root:$root,target:$target,staged:$staged,backup:$backup}' \
     >"$tmp" || return 1
   chmod 600 "$tmp" 2>/dev/null || true
@@ -89,26 +104,35 @@ repository_write_journal() {
 }
 
 repository_recover_publication() {
-  local root="$1" journal state recorded_root target staged backup root_real recovery_dir
+  local root="$1" journal state recorded_root target staged original root_real recovery_dir
   journal=$(repository_journal_path "$root") || return 1
   [[ -e $journal ]] || return 0
   [[ -f $journal && ! -L $journal ]] || return 1
   jq -e '
-    type == "object" and keys == ["backup","root","schemaVersion","staged","state","target"] and
+    type == "object" and
+    (keys == ["backup","root","schemaVersion","staged","state","target"] or
+     keys == ["original","root","schemaVersion","staged","state","target"]) and
     .schemaVersion == 1 and
     (.state == "prepared" or .state == "old-moved" or .state == "published") and
-    all(.root,.target,.staged,.backup; type == "string")
+    all(.root,.target,.staged,(if has("backup") then .backup else .original end); type == "string")
   ' "$journal" >/dev/null 2>&1 || return 1
   state=$(jq -r '.state' "$journal")
   recorded_root=$(jq -r '.root' "$journal")
   target=$(jq -r '.target' "$journal")
   staged=$(jq -r '.staged' "$journal")
-  backup=$(jq -r '.backup' "$journal")
+  original=$(jq -r 'if has("backup") then .backup else .original end' "$journal")
   root_real=$(realpath -e -- "$root") || return 1
   [[ $recorded_root == "$root_real" && $target == "$root_real"/* &&
-     $staged == "$root_real"/.montage-stage.* ]] || return 1
-  [[ -z $backup || $backup == "$root_real"/.montage-recovery.*/original ]] || return 1
-  if [[ -n $backup ]]; then recovery_dir=$(dirname "$backup"); else recovery_dir=""; fi
+     $(dirname "$staged") == "$root_real" &&
+     $(basename "$staged") =~ ^\.montage-stage\.[A-Za-z0-9]+$ && ! -L $staged ]] || return 1
+  repository_destination_valid "$root_real" "${target#"$root_real"/}" || return 1
+  [[ -z $original || $original == "$root_real"/.montage-recovery.*/original ]] || return 1
+  if [[ -n $original ]]; then recovery_dir=$(dirname "$original"); else recovery_dir=""; fi
+  if [[ -n $recovery_dir ]]; then
+    [[ $(dirname "$recovery_dir") == "$root_real" &&
+       $(basename "$recovery_dir") =~ ^\.montage-recovery\.[A-Za-z0-9]+$ &&
+       ! -L $recovery_dir && ! -L $original ]] || return 1
+  fi
 
   case "$state" in
     prepared)
@@ -117,8 +141,8 @@ repository_recover_publication() {
       ;;
     old-moved)
       [[ ! -e $target ]] || return 1
-      if [[ -n $backup && -e $backup ]]; then
-        mv -- "$backup" "$target"
+      if [[ -n $original && -e $original ]]; then
+        mv -- "$original" "$target"
         rmdir -- "$recovery_dir"
       fi
       [[ -e $staged ]] && rm -rf -- "$staged"
@@ -136,30 +160,31 @@ repository_recover_publication() {
 # VALIDATOR is called with the staged path before a journal or destination
 # mutation. A test-only interruption hook leaves a recoverable old-moved state.
 repository_publish_path() {
-  local root="$1" staged="$2" relative="$3" validator="${4:-}" root_real staged_real target backup="" journal recovery_dir=""
+  local root="$1" staged="$2" relative="$3" validator="${4:-}" root_real staged_real target original="" journal recovery_dir=""
   repository_root_valid "$root" || return 1
-  repository_relative_path_valid "$relative" || return 1
+  repository_destination_valid "$root" "$relative" || return 1
   root_real=$(realpath -e -- "$root") || return 1
   [[ -e $staged && ! -L $staged ]] || return 1
   staged_real=$(realpath -e -- "$staged") || return 1
   [[ $staged_real == "$root_real"/.montage-stage.* ]] || return 1
   [[ -z $validator ]] || "$validator" "$staged_real" || return 1
+  repository_destination_valid "$root_real" "$relative" || return 1
   target="$root_real/$relative"
   mkdir -p -- "$(dirname "$target")"
   if [[ -e $target || -L $target ]]; then
     recovery_dir=$(mktemp -d "$root_real/.montage-recovery.XXXXXX") || return 1
-    backup="$recovery_dir/original"
+    original="$recovery_dir/original"
   fi
-  repository_write_journal "$root_real" prepared "$target" "$staged_real" "$backup" || {
+  repository_write_journal "$root_real" prepared "$target" "$staged_real" "$original" || {
     [[ -n $recovery_dir ]] && rmdir -- "$recovery_dir"
     return 1
   }
   journal=$(repository_journal_path "$root_real") || return 1
-  if [[ -n $backup ]]; then mv -- "$target" "$backup" || return 1; fi
-  repository_write_journal "$root_real" old-moved "$target" "$staged_real" "$backup" || return 1
+  if [[ -n $original ]]; then mv -- "$target" "$original" || return 1; fi
+  repository_write_journal "$root_real" old-moved "$target" "$staged_real" "$original" || return 1
   if [[ ${MONTAGE_TEST_INTERRUPT_AFTER_OLD_MOVE:-0} == 1 ]]; then return 75; fi
   mv -- "$staged_real" "$target" || return 1
-  repository_write_journal "$root_real" published "$target" "$staged_real" "$backup" || return 1
+  repository_write_journal "$root_real" published "$target" "$staged_real" "$original" || return 1
   [[ -n $recovery_dir && -d $recovery_dir ]] && rm -rf -- "$recovery_dir"
   rm -- "$journal"
 }

@@ -11,6 +11,8 @@
 # without pretending provenance from one machine is valid on another.
 LOADOUT_REGISTRY_SCHEMA=1
 LOADOUT_REGISTRY="$STATE_DIR/loadouts.json"
+LOADOUT_STATUS_EVIDENCE_SCHEMA=1
+LOADOUT_STATUS_EVIDENCE="$STATE_DIR/status-evidence.json"
 REGISTRY=""
 REGISTRY_REVISION=0
 REGISTRY_INDEX_READY=0
@@ -49,6 +51,65 @@ registry_claims_json() { registry_build_indexes; printf '%s' "${REGISTRY_CLAIMS_
 registry_empty() {
   jq -nc '{schemaVersion: 1, revision: 0,
     baseline: {activeTheme: null}, loadouts: [], resources: [], claims: [], operation: null}'
+}
+
+loadout_status_evidence_empty() {
+  jq -nc '{schemaVersion:1,updates:[]}'
+}
+
+loadout_status_evidence_validate() {
+  local file="$1"
+  [[ -f $file && ! -L $file ]] || return 1
+  jq -e '
+    type == "object" and keys == ["schemaVersion","updates"] and
+    .schemaVersion == 1 and (.updates | type == "array") and
+    (all(.updates[];
+      type == "object" and
+      keys == ["availableCommit","baselineCommit","digest","itemId","loadoutId","repositoryId"] and
+      (.loadoutId | type == "string" and test("^[a-z0-9][a-z0-9-]{0,80}$")) and
+      (.repositoryId | type == "string" and test("^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")) and
+      (.itemId | type == "string" and test("^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")) and
+      (.baselineCommit | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$")) and
+      (.availableCommit | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$")) and
+      .availableCommit != .baselineCommit and
+      (.digest | type == "string" and test("^[0-9a-f]{64}$")))) and
+    (([.updates[].loadoutId] | length) == ([.updates[].loadoutId] | unique | length))
+  ' "$file" >/dev/null 2>&1
+}
+
+loadout_status_evidence_load() {
+  if [[ ! -e $LOADOUT_STATUS_EVIDENCE && ! -L $LOADOUT_STATUS_EVIDENCE ]]; then
+    LOADOUT_STATUS_EVIDENCE_JSON=$(loadout_status_evidence_empty)
+    return 0
+  fi
+  loadout_status_evidence_validate "$LOADOUT_STATUS_EVIDENCE" || return 1
+  LOADOUT_STATUS_EVIDENCE_JSON=$(<"$LOADOUT_STATUS_EVIDENCE")
+}
+
+# An explicit update dry run is the only producer of update-available status.
+# The evidence is advisory and grants no install or cleanup authority.
+loadout_status_evidence_record_update() {
+  local loadout_id="$1" repository_id="$2" item_id="$3" baseline="$4" available="$5" digest="$6"
+  local current next tmp
+  [[ $available != "$baseline" ]] || return 0
+  loadout_status_evidence_load || return 1
+  current="$LOADOUT_STATUS_EVIDENCE_JSON"
+  next=$(jq -c --arg loadoutId "$loadout_id" --arg repositoryId "$repository_id" \
+    --arg itemId "$item_id" --arg baselineCommit "$baseline" \
+    --arg availableCommit "$available" --arg digest "$digest" '
+      .updates = ([.updates[] | select(.loadoutId != $loadoutId)] + [{
+        loadoutId:$loadoutId,repositoryId:$repositoryId,itemId:$itemId,
+        baselineCommit:$baselineCommit,availableCommit:$availableCommit,digest:$digest
+      }] | sort_by(.loadoutId))
+    ' <<<"$current") || return 1
+  private_dir "$STATE_DIR"
+  montage_make_temp_file "$STATE_DIR/.status-evidence.XXXXXX" || return 1
+  tmp="$MONTAGE_TEMP_PATH"
+  printf '%s\n' "$next" >"$tmp"
+  chmod 600 "$tmp" || return 1
+  loadout_status_evidence_validate "$tmp" || return 1
+  mv -- "$tmp" "$LOADOUT_STATUS_EVIDENCE" || return 1
+  LOADOUT_STATUS_EVIDENCE_JSON="$next"
 }
 
 registry_definition_valid() {

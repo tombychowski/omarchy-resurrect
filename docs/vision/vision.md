@@ -1,46 +1,39 @@
 # Vision
 
-## Fresh Omarchy to your machine
+## A deliberate Omarchy setup you can carry
 
-Omarchy can create a clean desktop quickly. The slower part is reconstructing the accumulated choices that made the previous machine useful: packages, selected configuration, themes, web apps, plugins, and a handful of deliberate permissions.
+The useful shape of an Omarchy machine is a set of choices: packages, pinned
+plugins, reconstructible web apps, and a theme. Montage makes those choices
+inspectable, shareable, and repeatable without turning a profile into a script
+runner or a copy of somebody's home directory.
 
-Montage exists to make that reconstruction inspectable, repeatable, and owned by the user. A user should be able to capture the portable shape of a working machine, start from a clean Omarchy installation, preview what will happen, and restore that shape without turning a backup into an opaque installer.
+A person should be able to compose a constrained loadout, publish it as one
+stable item in a library they own, inspect it, apply it additively, and later
+check, repair, update, or remove only the state Montage can prove it owns.
 
-## The intended outcome
+## Intended outcome
 
-A trustworthy reconstruction has four properties:
+A trustworthy loadout lifecycle is:
 
-- The user can see what was captured, what was omitted, and what cannot be rebuilt elsewhere.
-- Restoring is additive and resumable; interruption or disagreement does not force a restart from zero.
-- Actions that execute fetched build instructions or arrange for code to run later require separate, informed consent.
-- Machine-readable state is available through the CLI so the panel and automation do not invent a second truth.
-
-Montage is successful when a user can understand the boundary of the backup before needing it, reconstruct a machine when they do need it, and verify the result afterward.
-
-## Two artifacts for two jobs
-
-The private **vault** is a versioned Git repository for one user's reconstructible machine state. It can contain selected dotfiles and an explicitly enabled encrypted secrets bundle, so it belongs in storage the user controls.
-
-A **loadout** is deliberately smaller and shareable. It names supported setup actions—packages, pinned plugins, reconstructible web apps, and a theme—but has no field for dotfiles, arbitrary files, secrets, or commands. It helps another person adopt a setup without accepting a disguised home-directory archive or script runner.
+- declarative: a profile names supported resources and carries no commands or arbitrary files;
+- explicit: source, library, item, and exact commit identities remain visible;
+- additive: apply does not infer deletion from absence or take ownership of pre-existing resources;
+- consentful: fetched AUR build instructions require a separate decision;
+- observable: the CLI reports health, drift, pending work, updates, and library decisions for people and consumers;
+- local-first: libraries and applied state remain user-owned files, while remotes are optional Git transport.
 
 ## Boundaries
 
-Montage is for Omarchy reconstruction, not general backup or fleet management.
+Montage is not a general data-transfer, secret-management, fleet-management, or
+arbitrary execution system. A portable loadout contains no dotfiles, personal
+documents, credential material, services, shell fragments, or implied cleanup.
+Use purpose-built tools for user data and private machine state.
 
-It does not replace backups for documents, photos, repositories, databases, or other user data. It does not clone machine identity, network state, disks, or hardware configuration. It does not promise to reconstruct inputs it cannot represent safely, and it reports those gaps instead of calling the capture complete.
+Montage is independent from Ress. The only foreign boundary is a focused,
+read-only inspection and import of one supported Ress v1 portable profile into
+a separate Montage library item. It does not adopt Ress state, history, locks,
+remotes, or ownership.
 
-The project is local-first. Vault and loadout libraries are ordinary local Git
-repositories; remotes are optional. Montage does not require an account, hosted
-control plane, or project-operated storage service. Independent native
-repositories can synchronize with user-controlled GitHub repositories without
-making a hosted service authoritative.
-
-Montage is a separate product, not an in-place Ress release. Compatibility is a
-bounded, explicit port between separate paths; it is not shared live state or a
-commitment to inherit future Ress direction.
-
-## Direction
-
-Future work should make reconstruction more trustworthy before making it broader: clearer evidence, better compatibility boundaries, more precise verification, and safer representations for genuinely portable state. New capture categories earn their place only when they can be previewed, restored, verified, and explained without weakening consent or user ownership.
-
-This document describes direction and boundaries. For currently guaranteed behavior, consult [OpenSpec](../../openspec/) and the [contracts](../contracts/).
+Future work should improve evidence, safety, and clarity before expanding the
+artifact's authority. Current guarantees live in [OpenSpec](../../openspec/)
+and the [contracts](../contracts/).

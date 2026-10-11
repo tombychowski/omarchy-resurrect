@@ -20,7 +20,9 @@ mntg loadout check "$ID" --json
 assert_ok "protected resource is healthy under live checking"
 assert_output '"healthState": "protected"'
 
-mntg apply --dry-run --porcelain "$P"
+PORCELAIN_PROFILE="$SANDBOX/porcelain-untracked"
+write_package_loadout "$PORCELAIN_PROFILE" "Porcelain untracked" missing-package
+mntg apply --dry-run --porcelain "$PORCELAIN_PROFILE"
 assert_ok "apply dry-run porcelain succeeds"
 if grep -qEv '^(STEP|LOG|DONE)\|' <<<"$OUT"; then _fail "apply porcelain contains only protocol records" "$OUT"; else _pass; fi
 mntg loadout remove --dry-run --porcelain "$ID"

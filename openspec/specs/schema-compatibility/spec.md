@@ -2,45 +2,48 @@
 
 ## Purpose
 
-Defines the version and migration boundary that lets ress recognize supported vaults without evaluating hostile schema input or silently accepting incompatible formats.
+Defines the version and migration boundary that lets Montage recognize supported Loadout libraries and profiles without evaluating hostile schema input or silently accepting incompatible formats.
 
 ## Requirements
 
-### Requirement: Vault Schema Version Is Validated Before Use
+### Requirement: Loadout Schemas Are Validated Before Use
 
-The system SHALL accept a Montage repository envelope, backup snapshot, portable profile, or port source version only when it is a plain supported integer and SHALL reject invalid or unsupported values before mutation.
+The system SHALL accept a native loadout repository envelope, portable profile, applied registry, configured-repository document, or Ress loadout source version only when it is a plain supported integer and SHALL reject invalid or unsupported values before mutation.
 
-#### Scenario: Hostile schema expression is rejected
+#### Scenario: Hostile schema expression is supplied
 
 - **WHEN** an artifact provides a schema version containing non-numeric shell or arithmetic syntax
-- **THEN** Montage rejects the artifact before evaluating that content or changing repository or machine state
+- **THEN** Montage rejects it before evaluating that content or changing repository, registry, or machine state
 
-#### Scenario: Unsupported future schema is rejected
+#### Scenario: Unsupported future schema is supplied
 
-- **WHEN** an artifact declares a well-formed schema version newer than the supported version for its artifact type
-- **THEN** Montage stops with a compatibility error before import, backup, apply, or restore
+- **WHEN** a well-formed schema version is newer than the supported version for its loadout artifact type
+- **THEN** Montage stops with a compatibility error before share, apply, migration, or lifecycle mutation
 
-### Requirement: Current Manifest Name Is Canonical
+### Requirement: Loadout Repository Envelope Remains Stable
 
-The system SHALL write the Montage repository envelope as `montage.json`, the current vault snapshot manifest as `backup.json`, and replacement files with a `.montage-bak` suffix. It SHALL NOT write `ress.json` as a Montage-native control file.
+The system SHALL continue to recognize schema-version-1 `montage.json` only as a loadout repository envelope with fixed `repositoryType: "loadouts"`.
 
-#### Scenario: New backup writes current manifest
+#### Scenario: Existing native loadout library is opened
 
-- **WHEN** backup completes against a current Montage vault repository
-- **THEN** the repository contains `montage.json` and `backup.json`
-- **AND** does not write a Ress manifest as a native control
+- **WHEN** its schema-version-1 envelope and contained profiles validate
+- **THEN** Montage uses the library without rewriting it merely to remove the former repository-kind choice
 
-### Requirement: Defined Legacy Vault Artifacts Remain Readable
+#### Scenario: Vault envelope is opened
 
-The system SHALL recognize supported Ress v1 manifests and backup suffixes only through the explicit Ress port adapter. It SHALL NOT migrate a Ress vault in place or interpret Ress controls as Montage-native repository controls.
+- **WHEN** `montage.json` identifies a vault repository or carries machine lineage
+- **THEN** active Montage refuses it as an unsupported repository kind
 
-#### Scenario: Legacy manifest is restored
+### Requirement: Legacy Format Reading Is Migration Only
 
-- **WHEN** an explicit Ress import receives a supported legacy manifest name
-- **THEN** the port adapter reads it under the supported Ress v1 rules in staging
+The system SHALL recognize supported Ress v1 control semantics only while inspecting or importing a portable Ress loadout profile and SHALL NOT interpret them as native Montage controls.
 
-#### Scenario: Legacy vault is backed up again
+#### Scenario: Supported Ress profile is imported
 
-- **WHEN** the user confirms import of a supported Ress vault
-- **THEN** Montage publishes a separate Montage-native repository
-- **AND** leaves the Ress manifest names and source directory unchanged
+- **WHEN** explicit Ress loadout migration receives a supported v1 profile
+- **THEN** the migration boundary validates it and publishes a separate native library item
+
+#### Scenario: Ress control appears in native runtime
+
+- **WHEN** an ordinary Montage repository or apply operation encounters Ress-only repository, vault, or runtime controls
+- **THEN** Montage refuses them rather than migrating or adopting them in place

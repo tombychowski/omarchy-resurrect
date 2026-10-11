@@ -6,7 +6,6 @@
 # used by share, update, and apply. Definitions only at source time.
 
 PROFILE_SCHEMA=1
-PROFILE_DIR_DEFAULT="${XDG_DATA_HOME:-$HOME/.local/share}/montage/profile"
 APPLY_WORK=""
 
 profile_metadata_valid() {

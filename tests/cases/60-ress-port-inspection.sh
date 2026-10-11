@@ -1,62 +1,97 @@
-# Ress port inspection and plans are versioned, explicit, and non-mutating.
+# Ress migration reads exactly one contained regular profile. Hostile JSON,
+# credentials, private-key fields, executable authority, and symlink topology
+# are non-waivable refusals; unrelated sidecar state is ignored, never adopted.
 
-FIXTURES="$REPO_DIR/tests/fixtures/ress-v1"
-source_root="$SANDBOX/source-vault"
-cp -a "$FIXTURES/vault" "$source_root"
-source_before=$(find "$source_root" -type f -print0 | sort -z | xargs -0 sha256sum)
-destination="$SANDBOX/native-vault"
+source "$TESTS_DIR/lib/loadout.sh"
 
-mntg --dry-run port ress plan "$source_root" --destination "$destination" --json
-assert_ok "current Ress vault import plan is available as JSON"
-jq -e '.schemaVersion==1 and .kind=="montage-port-report" and
-  .operation=="plan" and .artifactType=="vault" and .artifactVersion==1 and
-  .source==$source and .destination==$destination and
-  .selectedRevisions==[{selector:"current",compatible:true,reason:null}] and
-  [.mutations[].code]==["create-vault-repository","create-montage-commit"]' \
-  --arg source "$source_root" --arg destination "$destination" <<<"$OUT" >/dev/null &&
-  _pass || _fail "plan reports exact source, destination, selection, and mutations" "$OUT"
-assert_no_file "$destination" "dry-run does not create the destination"
-assert_equals "$(find "$source_root" -type f -print0 | sort -z | xargs -0 sha256sum)" \
-  "$source_before" "dry-run leaves every source file unchanged"
+fixture="$REPO_DIR/tests/fixtures/ress-v1/loadout/profile.json"
+valid="$SANDBOX/valid-source"
+mkdir -p "$valid/state" "$valid/locks"
+cp "$fixture" "$valid/profile.json"
+printf 'foreign applied state\n' >"$valid/state/loadouts.json"
+printf 'foreign lock\n' >"$valid/locks/migration.lock"
+valid_before=$(find "$valid" -type f -print0 | sort -z | xargs -0 sha256sum)
 
-mntg port ress plan "$source_root" --destination "$destination"
-assert_ok "current Ress vault plan has readable human output"
-assert_output "ress-v1 vault" "human plan identifies the format and artifact type"
-assert_output "selected revisions: 1" "human plan reports selected revisions"
-assert_output "losses: 2" "human plan reports self-plugin decisions"
-assert_output "planned mutations: 2" "human plan reports destination mutations"
-assert_no_file "$destination" "planning remains non-mutating without the global dry-run flag"
+mntg port ress inspect "$valid" --json
+assert_ok "contained regular Ress profile inspects"
+jq -e '.compatible and .ready and
+  .warnings==[{code:"non-profile-content-ignored"}] and
+  .source.profile==$profile' --arg profile "$valid/profile.json" <<<"$OUT" >/dev/null && _pass ||
+  _fail "inspection warns that non-profile state is ignored" "$OUT"
+assert_equals "$(find "$valid" -type f -print0 | sort -z | xargs -0 sha256sum)" \
+  "$valid_before" "inspection leaves the complete source tree unchanged"
 
-nonempty="$SANDBOX/nonempty"
-mkdir "$nonempty"
-printf 'keep\n' >"$nonempty/sentinel"
-mntg port ress plan "$source_root" --destination "$nonempty" --json
-assert_fails "a non-empty destination is refused during planning"
-assert_equals "$(jq -r '.reason' <<<"$OUT")" "destination-not-empty" \
-  "destination refusal is machine-readable"
-assert_file "$nonempty/sentinel" "destination refusal preserves existing content"
-
-future="$SANDBOX/future"
-mkdir "$future"
-cp "$FIXTURES/history/03-future.json" "$future/ress.json"
-mntg port ress plan "$future" --destination "$destination" --json
-assert_fails "a future Ress version cannot be planned"
-assert_equals "$(jq -r '.artifactVersion' <<<"$OUT")" "2" \
-  "future version is reported"
-assert_equals "$(jq -r '.supportedArtifactVersion' <<<"$OUT")" "1" \
-  "supported version is reported"
-
-hostile="$SANDBOX/hostile"
-cp -a "$FIXTURES/vault" "$hostile"
-ln -s "$SANDBOX/outside" "$hostile/home/escape"
-mntg port ress inspect "$hostile" --json
-assert_fails "a symlinked Ress artifact is hostile input"
-assert_equals "$(jq -r '.reason' <<<"$OUT")" "malformed-or-unsafe" \
-  "hostile artifact refusal is explicit"
-assert_no_file "$SANDBOX/outside" "hostile inspection follows no escaping link"
+mntg port ress inspect "$valid/profile.json" --json
+assert_ok "the contained profile file is accepted directly"
+assert_equals "$(jq -r '.source.root' <<<"$OUT")" "$valid" \
+  "direct-file inspection retains the containing source identity"
 
 source_link="$SANDBOX/source-link"
-ln -s "$source_root" "$source_link"
+ln -s "$valid" "$source_link"
 mntg port ress inspect "$source_link" --json
-assert_fails "a symlink source root is refused"
-assert_no_file "$destination" "all refused inspections leave destination absent"
+assert_fails "symlinked source root is refused"
+assert_equals "$(jq -r '.reason' <<<"$OUT")" "unsafe-or-missing-source" \
+  "symlink-root refusal is explicit"
+
+profile_link="$SANDBOX/profile-link"
+mkdir -p "$profile_link"
+ln -s "$valid/profile.json" "$profile_link/profile.json"
+mntg port ress inspect "$profile_link" --json
+assert_fails "symlinked profile control is refused"
+assert_equals "$(jq -r '.reason' <<<"$OUT")" "unsafe-profile-control"
+
+other_name="$SANDBOX/not-profile.json"
+cp "$fixture" "$other_name"
+mntg port ress inspect "$other_name" --json
+assert_fails "arbitrary JSON file names are not inferred as Ress profiles"
+assert_equals "$(jq -r '.reason' <<<"$OUT")" "outside-loadout-boundary"
+
+malformed="$SANDBOX/malformed"
+mkdir -p "$malformed"
+printf '{bad json\n' >"$malformed/profile.json"
+mntg port ress inspect "$malformed" --json
+assert_fails "malformed profile JSON is refused"
+assert_equals "$(jq -r '.reason' <<<"$OUT")" "malformed-or-unsafe-profile"
+
+marker="$SANDBOX/executable-authority-ran"
+for field in commands privateKey cleanupPolicy; do
+  hostile="$SANDBOX/hostile-$field"
+  mkdir -p "$hostile"
+  jq --arg field "$field" --arg value "touch $marker" '. + {($field):$value}' \
+    "$fixture" >"$hostile/profile.json"
+  mntg port ress inspect "$hostile" --json
+  assert_fails "unsupported authority field $field is refused"
+  assert_equals "$(jq -r '.reason' <<<"$OUT")" "malformed-or-unsafe-profile" \
+    "$field is not represented as waivable loss"
+  assert_no_file "$marker" "$field content is never executed"
+done
+
+for kind in plugin webapp; do
+  credential="$SANDBOX/credential-$kind"
+  mkdir -p "$credential"
+  if [[ $kind == plugin ]]; then
+    jq '.plugins[0].url="https://user:TOPSECRET@example.com/plugin"' \
+      "$fixture" >"$credential/profile.json"
+  else
+    jq '.webapps[0].url="https://user:TOPSECRET@example.com/app"' \
+      "$fixture" >"$credential/profile.json"
+  fi
+  mntg port ress inspect "$credential" --json
+  assert_fails "credential-bearing Ress $kind URL is refused"
+  assert_equals "$(jq -r '.reason' <<<"$OUT")" "malformed-or-unsafe-profile"
+  assert_no_output "TOPSECRET" "$kind credential is not echoed"
+done
+
+# A dry-run import of the valid source reports only one profile publication;
+# sidecar state never becomes a destination file or local applied authority.
+library="$SANDBOX/library"
+mntg repository init "$library" --id inspection-library >/dev/null
+mntg repository configure inspection "$library" >/dev/null
+mntg --dry-run port ress import loadout "$valid" \
+  --repository inspection --loadout imported --json
+assert_ok "valid sidecar-bearing source has a non-mutating import preview"
+jq -e '.publication.planned and (.warnings|map(.code)|index("non-profile-content-ignored"))' \
+  <<<"$OUT" >/dev/null && _pass || _fail "preview preserves ignored-state warning" "$OUT"
+assert_no_file "$library/loadouts/imported/profile.json" "preview publishes no profile"
+assert_no_file "$library/loadouts/imported/state/loadouts.json" "foreign state is never staged"
+assert_no_file "$(registry_path)" "migration creates no applied-loadout authority"

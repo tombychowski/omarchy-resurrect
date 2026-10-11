@@ -32,18 +32,16 @@ rg -n '\b(registry_[a-zA-Z0-9_]*|loadout_[a-zA-Z0-9_]*|profile_[a-zA-Z0-9_]*|REG
   fail "machine module has a reverse dependency on vault/loadout ownership"
 rg -n '\b(APPLY_WORK|PROFILE_WORK|DRYRUN_VAULT)\b' "$ROOT/lib/montage/core.sh" >/dev/null 2>&1 &&
   fail "core cleanup names a domain-specific workspace"
-rg -ni '\b(ress|resurrect)\b' \
-  "$ROOT/lib/montage/port/common.sh" "$ROOT/lib/montage/port/inspect.sh" \
-  "$ROOT/lib/montage/port/import.sh" "$ROOT/lib/montage/port/export.sh" \
-  "$ROOT/lib/montage/port/commands.sh" >/dev/null 2>&1 &&
-  fail "format-neutral port lifecycle names a foreign format"
-rg -n 'confirm|git -C|rev-list|ls-tree|cat-file|checkout|archive|repository_(lock|stage|publish|commit|recover|worktree)|port_(publish_staged_directory|report_output)|montage_make_temp|loadout_repository_|vault_select_|resolve_vault' \
-  "$ROOT/lib/montage/port/adapters" >/dev/null 2>&1 &&
-  fail "port adapter owns shared lifecycle, Git, native transaction, staging, publication, or output behavior"
-rg -n '\bress_v1_[a-zA-Z0-9_]*\b' \
+rg -n '\b(port_adapter_|port_export_|port_import_vault|port_history_|translate_vault|translate_backup)\b' \
+  "$ROOT/bin/mntg" "$ROOT/lib/montage" >/dev/null 2>&1 &&
+  fail "retired generic, export, vault, or history port behavior remains reachable"
+rg -n '\bress_migration_[a-zA-Z0-9_]*\b' \
   "$ROOT/lib/montage/repository" "$ROOT/lib/montage/machine" \
   "$ROOT/lib/montage/vault" "$ROOT/lib/montage/loadout" >/dev/null 2>&1 &&
-  fail "native domain module depends on the Ress adapter"
+  fail "native domain module depends on the focused Ress migration boundary"
+rg -ni '\b(vault|backup|restore|secret|scheduler|retention|freshness)\b' \
+  "$ROOT/lib/montage/commands.sh" >/dev/null 2>&1 &&
+  fail "loadout-only application commands depend on retired vault concepts"
 
 (( failures == 0 )) || exit 1
 printf 'structure: %d modules and %d function definitions checked\n' "${#modules[@]}" "${#definitions[@]}"

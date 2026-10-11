@@ -1,39 +1,32 @@
 # Keyboard workflow
 
-The panel uses the same row model for pointer and keyboard activation.
+When the panel opens, arrow keys move among rows and left/right move among the
+three surfaces. `Enter` activates the focused row and `Escape` closes the
+panel. Shortcuts are `l` for Libraries, `c` or `s` for Compose/Share, and `a`
+for Applied Loadouts.
 
-## Navigation
+Text fields take focus for library metadata, migration source/item identity,
+and Share metadata/search. `Enter` or `Escape` returns focus to panel
+navigation.
 
-- Arrow keys move through rows and tabs; Enter activates the current row.
-- `b` starts backup.
-- `r` opens **Repositories** and asks for an exact vault backup selection.
-- `o` opens **Repositories**.
-- `s` opens **Share**.
-- `a` or `l` opens **Loadouts**.
-- Escape leaves every text field and returns focus to panel navigation.
+Compose offers eligible applied-loadout starting choices and additive preset
+rows. Adding a preset unions resources with manual selections, retains the
+selected theme, and explains skipped resources and theme conflicts. An absent
+or unavailable current profile is disabled with an explanation.
 
-On **Repositories**, select a repository row, then a stable loadout id or full
-backup commit. **Compose selected loadout** opens Share. **Restore this exact
-backup** opens a terminal pinned to that commit. Sync, retention, and port rows
-always expose their read-only preview before the terminal action.
+Every visible action is also a keyboard row: library and item selection, sync
+preview and terminal continuation, apply preview/apply, Compose handoff,
+library configuration, Ress decisions/inspection/publication, Share selection
+and acknowledgement, applied lifecycle actions, and AUR policy.
 
-## Evidence classification
+Rendered verification on a clean Omarchy installation must cover:
 
-Automated evidence (`tests/model-test.js` and `tests/cases/16-qml.sh`) covers row
-presence, focus escape handlers, state transitions, exact command arguments,
-parser refusal, and QML syntax/type resolution.
+1. each surface and empty/unavailable states;
+2. every attention color and active animation;
+3. keyboard-only library, item, and applied selection;
+4. text-focus return;
+5. divergent synchronization and Ress publication terminal handoffs; and
+6. scaling, scrolling, pointer parity, and malformed-result behavior.
 
-Clean-Omarchy evidence is required for rendered tab width, scrolling, pointer
-hit targets, visible keyboard cursor, focus return, terminal placement, and
-screen-reader behavior. Release evidence should capture:
-
-1. all four tabs at the target scale;
-2. repository, loadout, and backup selection using keyboard only;
-3. empty, invalid, loading, healthy, stale, divergent, and attention views;
-4. selected-loadout Share composition; and
-5. exact-restore, retention, sync, loadout-mutation, and port terminal handoffs
-   before confirmation.
-
-Screenshots are documentation evidence, not proof of CLI semantics. Record the
-machine image/version, display scale, plugin commit, and expected observation
-with each capture in the fresh-machine validation log.
+These visual observations remain fresh-machine evidence unless an automated
+renderer is available; they are not implied by syntax tests.

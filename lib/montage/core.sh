@@ -5,17 +5,11 @@
 #
 # Loaded by bin/mntg after it establishes PLUGIN_DIR. Owns CFG, global command
 # flags, bounded temporary cleanup, and the primary operation/config locks. Used by
-# every vault and loadout workflow. This module defines state and functions only;
+# every loadout workflow. This module defines state and functions only;
 # it must not parse arguments, install traps, perform I/O work, or emit output
 # merely because it was sourced.
 
-VERSION="1.2.0"
-SCHEMA=1
-
-# Native vaults use a repository envelope plus one current snapshot manifest.
-# Ress control names belong exclusively to the explicit port adapter.
-VAULT_MANIFEST="backup.json"
-BAK_SUFFIX=".montage-bak"
+VERSION="1.0.0"
 DEFAULTS_DIR="$PLUGIN_DIR/defaults"
 
 # Omarchy exports OMARCHY_PATH for exactly this, and the shell's own plugin
@@ -27,9 +21,6 @@ OMARCHY_DIR="${OMARCHY_PATH:-/usr/share/omarchy}"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/montage"
 CONFIG_FILE="$CONFIG_DIR/config"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/montage"
-DEFAULT_VAULT="${XDG_DATA_HOME:-$HOME/.local/share}/montage/vault"
-
-CATEGORIES=(packages config omarchy webapps plugins secrets)
 
 # ------------------------------------------------------------------- output
 
@@ -56,8 +47,6 @@ step_start() { emit "STEP|$1|start|$2"; (( PORCELAIN )) || printf '%s▸ %s%s %s
 step_ok()    { emit "STEP|$1|ok|$2";    (( PORCELAIN )) || printf '  %s✓%s %s\n' "$c_green" "$c_reset" "$2"; }
 step_skip()  { emit "STEP|$1|skip|$2";  (( PORCELAIN )) || printf '  %s– %s: %s%s\n' "$c_dim" "$1" "$2" "$c_reset"; }
 step_warn()  { emit "STEP|$1|warn|$2";  (( PORCELAIN )) || printf '  %s!%s %s: %s\n' "$c_yellow" "$c_reset" "$1" "$2"; }
-step_fail()  { emit "STEP|$1|fail|$2";  FAILED_STEPS+=("$1: $2"); (( PORCELAIN )) || printf '  %s✗%s %s: %s\n' "$c_red" "$c_reset" "$1" "$2"; }
-progress()   { emit "PROGRESS|$1|$2|$3"; }
 note()       { emit "LOG|$1";           (( PORCELAIN )) || printf '  %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
 
 die() {
@@ -79,35 +68,10 @@ confirm() {
 # One schema owns every persisted setting. CONFIG_KEYS is also the stable file
 # order; loading deliberately preserves malformed values for known keys so the
 # CLI can report hand edits while each consumer still applies its safe fallback.
-CONFIG_KEYS=(
-  VAULT REMOTE AUTO_BACKUP AUTO_INTERVAL_HOURS AUTO_PUSH
-  INCLUDE_PACKAGES INCLUDE_CONFIG INCLUDE_OMARCHY INCLUDE_WEBAPPS
-  INCLUDE_PLUGINS INCLUDE_SECRETS SECRETS_MODE SECRETS_RECIPIENT PROFILE_URL
-  ENABLE_UNITS AUR SECRET_SCAN CAPTURE_AUTOSTART
-)
-declare -A CONFIG_DEFAULTS=(
-  [VAULT]="$DEFAULT_VAULT" [REMOTE]="" [AUTO_BACKUP]="off"
-  [AUTO_INTERVAL_HOURS]="24" [AUTO_PUSH]="0" [INCLUDE_PACKAGES]="1"
-  [INCLUDE_CONFIG]="1" [INCLUDE_OMARCHY]="1" [INCLUDE_WEBAPPS]="1"
-  [INCLUDE_PLUGINS]="1" [INCLUDE_SECRETS]="0" [SECRETS_MODE]="passphrase"
-  [SECRETS_RECIPIENT]="" [PROFILE_URL]="" [ENABLE_UNITS]="ask" [AUR]="ask"
-  [SECRET_SCAN]="warn" [CAPTURE_AUTOSTART]="0"
-)
-declare -A CONFIG_TYPES=(
-  [VAULT]="nonempty" [REMOTE]="url" [AUTO_BACKUP]="choice"
-  [AUTO_INTERVAL_HOURS]="uint" [AUTO_PUSH]="choice" [INCLUDE_PACKAGES]="choice"
-  [INCLUDE_CONFIG]="choice" [INCLUDE_OMARCHY]="choice" [INCLUDE_WEBAPPS]="choice"
-  [INCLUDE_PLUGINS]="choice" [INCLUDE_SECRETS]="choice" [SECRETS_MODE]="choice"
-  [SECRETS_RECIPIENT]="string" [PROFILE_URL]="url" [ENABLE_UNITS]="choice"
-  [AUR]="choice" [SECRET_SCAN]="choice" [CAPTURE_AUTOSTART]="choice"
-)
-declare -A CONFIG_CHOICES=(
-  [AUR]="ask yes no" [ENABLE_UNITS]="ask yes no" [SECRET_SCAN]="warn block off"
-  [AUTO_BACKUP]="on off" [AUTO_PUSH]="0 1" [CAPTURE_AUTOSTART]="0 1"
-  [INCLUDE_PACKAGES]="0 1" [INCLUDE_CONFIG]="0 1" [INCLUDE_OMARCHY]="0 1"
-  [INCLUDE_WEBAPPS]="0 1" [INCLUDE_PLUGINS]="0 1" [INCLUDE_SECRETS]="0 1"
-  [SECRETS_MODE]="passphrase recipient"
-)
+CONFIG_KEYS=(AUR)
+declare -A CONFIG_DEFAULTS=([AUR]="ask")
+declare -A CONFIG_TYPES=([AUR]="choice")
+declare -A CONFIG_CHOICES=([AUR]="ask yes no")
 declare -A CFG=()
 for config_key in "${CONFIG_KEYS[@]}"; do CFG[$config_key]="${CONFIG_DEFAULTS[$config_key]}"; done
 unset config_key
@@ -124,10 +88,7 @@ load_config() {
     value="${value%"${value##*[![:space:]]}"}"
     [[ -n $key && -v CONFIG_DEFAULTS[$key] ]] && CFG[$key]="$value"
   done <"$CONFIG_FILE"
-  # Older hand-written configs may contain transport credentials. Once loaded,
-  # every consumer sees only the credential-free identity.
-  CFG[REMOTE]=$(strip_credentials "${CFG[REMOTE]:-}")
-  CFG[PROFILE_URL]=$(strip_credentials "${CFG[PROFILE_URL]:-}")
+  return 0
 }
 
 save_config() {
@@ -148,33 +109,6 @@ save_config() {
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
-cat_enabled() {
-  local key="INCLUDE_$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
-  [[ ${CFG[$key]:-0} == 1 ]]
-}
-
-# ---------------------------------------------------- settings, as JSON
-#
-# The config file is meant to be edited by hand, so a value in it can be
-# anything. Raw values used to go straight into `jq --argjson`, and
-# `INCLUDE_OMARCHY=` or `AUTO_INTERVAL_HOURS=24h` then made
-# `mntg status --json` exit 2 with no output at all — while the panel reads
-# nothing but that command, so the panel's whole backup summary went blank
-# without a word anywhere. Nothing below trusts the text any more: a flag is
-# read exactly the way cat_enabled reads it, and a number has to be a number.
-
-json_flag() { [[ ${1:-} == 1 ]] && printf 'true' || printf 'false'; }
-
-json_number() {
-  local value="${1:-}" fallback="${2:-0}"
-  [[ $value =~ ^[0-9]{1,9}$ ]] || value="$fallback"
-  printf '%s' "$value"
-}
-
-config_status_flag() { json_flag "${CFG[$1]}"; }
-config_status_onoff() { [[ ${CFG[$1]} == on ]] && printf true || printf false; }
-config_status_number() { json_number "${CFG[$1]}" "${CONFIG_DEFAULTS[$1]}"; }
-
 config_validate_value() {
   local key="$1" value="$2" choice
   case "${CONFIG_TYPES[$key]}" in
@@ -182,26 +116,23 @@ config_validate_value() {
       for choice in ${CONFIG_CHOICES[$key]}; do [[ $value == "$choice" ]] && return 0; done
       die "$key must be one of: ${CONFIG_CHOICES[$key]} (got: $value)"
       ;;
-    uint) [[ $value =~ ^[0-9]+$ ]] || die "$key must be a whole number of hours (got: $value)" ;;
-    nonempty) [[ -n $value ]] || die "$key cannot be empty" ;;
-    url)
-      [[ -z $value ]] && return 0
-      case "$key" in
-        REMOTE) valid_git_remote "$value" && ! url_has_credentials "$value" ||
-          die "$key must be a credential-free HTTPS, SSH, or Git remote" ;;
-        PROFILE_URL) valid_public_https "$value" ||
-          die "$key must be a credential-free HTTPS URL" ;;
-      esac
-      ;;
+    *) die "internal error: unsupported setting type for $key" ;;
+  esac
+}
+
+config_aur_policy() {
+  case "${CFG[AUR]:-}" in
+    ask|yes|no) printf '%s' "${CFG[AUR]}" ;;
+    *) printf 'ask' ;;
   esac
 }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 private_dir() { mkdir -p "$1" && chmod 700 "$1" 2>/dev/null || true; }
 
-# The panel-owned engine and the headless scheduler are separate processes with
-# separate ideas of "busy". Without a lock they will both write the same git
-# vault; without the marker file the bar shows nothing while the scheduler runs.
+# Mutating commands share one lock and publish a tokenized marker while they
+# hold it. Status accepts the marker only while the operation lock is genuinely
+# held, so a stale file cannot make the bar report fabricated activity.
 declare -a MONTAGE_CLEANUP_FILES=()
 declare -a MONTAGE_CLEANUP_DIRS=()
 MONTAGE_TEMP_PATH=""
@@ -248,10 +179,10 @@ montage_cleanup() {
   return 0
 }
 # `mntg set` is a read-modify-write of one small file, and the panel fires one
-# per toggle through execDetached — nine rows now write this way. Two in quick
+# per selection through execDetached. Two in quick
 # succession could read the same config and the later one drop the earlier one's
-# change. This is deliberately not the vault lock: a settings change is not
-# vault work, and taking that one would make the bar show a backup running.
+# change. This is deliberately not the operation lock: configuration does not
+# mutate a library or applied loadout and must not make the bar show activity.
 take_config_lock() {
   private_dir "$CONFIG_DIR"
   exec 8>"$CONFIG_DIR/.lock"
@@ -263,10 +194,9 @@ take_lock() {
   exec 9>"$STATE_DIR/lock"
   flock -n 9 || die "another mntg operation is already running"
   OPERATION_LOCKED=1
-  # The lock is still taken for a dry run — it clones into a temp directory and
-  # reads the vault, and two of those at once is still two — but the marker the
-  # bar reads as "busy" is not written, because nothing is happening to this
-  # machine.
+  # Dry runs still take the lock so two plans do not race over shared temporary
+  # or advisory evidence, but publish no marker because machine state is not
+  # changing.
   if (( ! DRY_RUN )); then
     local marker_token
     marker_token="${BASHPID:-$$}:$(date -u +%s%N):$RANDOM"
@@ -281,22 +211,6 @@ ensure_operation_lock() { (( OPERATION_LOCKED )) || take_lock; }
 plural() {
   local n=$1 one=$2 many=${3:-$2s}
   if (( n == 1 )); then printf '%d %s' "$n" "$one"; else printf '%d %s' "$n" "$many"; fi
-}
-
-duration() {
-  local s=$1
-  if (( s < 60 )); then printf '%ds' "$s"
-  else printf '%dm %ds' $((s / 60)) $((s % 60)); fi
-}
-
-# grep -c prints a count and still exits 1 on zero matches, so the naive
-# `grep -c ... || echo 0` prints "0\n0" and poisons every jq --argjson downstream.
-count_lines() {
-  if [[ -f $1 ]]; then
-    grep -cve '^[[:space:]]*$' "$1" 2>/dev/null || true
-  else
-    printf '0\n'
-  fi
 }
 
 # Concatenate the shipped list with the user's, dropping comments and blanks.

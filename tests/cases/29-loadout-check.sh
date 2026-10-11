@@ -36,10 +36,12 @@ assert_output '"currentState": "unverifiable"'
 assert_output '"healthState": "unverifiable"'
 
 mntg status --json
-assert_ok "backup status survives loadout state"
+assert_ok "loadout-only status reports tracked lifecycle state"
 assert_output '"loadouts"'
 
 printf '{bad json\n' >"$(registry_path)"
 mntg status --json
-assert_ok "malformed optional registry does not erase backup status"
-assert_output '"available": false'
+assert_ok "malformed applied registry remains a parseable unavailable status"
+jq -e '.attention=="unavailable-or-invalid" and .loadouts.available==false and
+  (.causes|index("applied-loadout-state-invalid"))' <<<"$OUT" >/dev/null && _pass ||
+  _fail "malformed applied state is classified explicitly" "$OUT"

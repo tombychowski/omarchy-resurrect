@@ -2,10 +2,22 @@
 STATUS=$?; OUT=$(<"$SANDBOX/structure.out")
 assert_ok "the checked-in ownership and entrypoint structure passes"
 assert_output "modules" "the structural check reports its scope"
+assert_file_contains "$REPO_DIR/tests/module-dependencies.tsv" \
+  $'lib/montage/commands.sh\tcore safety repository-common repository-registry registry resources lifecycle application-commands' \
+  "dependency map assigns the neutral application-command owner"
+assert_file_contains "$REPO_DIR/tests/mutate.sh" \
+  '[aur-always-builds]=38-loadout-repair-aur' \
+  "AUR mutation evidence points to the focused loadout detector"
+assert_file_contains "$REPO_DIR/tests/mutate.sh" \
+  '[repository-lock-ignored]=50-repository-transaction' \
+  "repository locking mutation evidence points to the transaction detector"
+assert_file_contains "$REPO_DIR/tests/mutate.sh" \
+  '[security-repository-remote-unsanitized]=43-url-credentials' \
+  "repository credential mutation evidence points to the sharing detector"
 if rg -n '\.ress-bak|\.resurrect-bak|\.local/bin/ress|\.config/ress|\.local/(state|share)/ress' \
     "$REPO_DIR/bin" "$REPO_DIR/lib/montage" "$REPO_DIR/defaults" \
     --glob '!**/port/**' >/dev/null; then
-  _fail "active Montage capture or restore code retains Ress-owned artifact paths"
+  _fail "active Montage code retains Ress-owned artifact paths"
 else
   _pass
 fi
@@ -15,14 +27,15 @@ assert_file_contains "$REPO_DIR/docs/index.md" "contracts/repository-format.md" 
   "the documentation index links the repository format contract"
 assert_file_contains "$REPO_DIR/docs/architecture/cli-modules.md" "repository/transaction.sh" \
   "CLI architecture records repository module ownership"
-assert_file_contains "$REPO_DIR/docs/architecture/cli-modules.md" "port/adapters/ress_v1/format.sh" \
-  "CLI architecture records bounded port adapter ownership"
+assert_file_contains "$REPO_DIR/docs/architecture/cli-modules.md" "port/ress.sh" \
+  "CLI architecture records focused Ress migration ownership"
 assert_file_contains "$REPO_DIR/docs/index.md" "architecture/port-adapters.md" \
-  "the documentation index links the port adapter architecture"
-assert_file_contains "$REPO_DIR/docs/architecture/port-adapters.md" "Adding another format" \
-  "port architecture documents the future-format extension workflow"
-assert_file_contains "$REPO_DIR/docs/contracts/repository-format.md" "repository list" \
-  "repository contract records the CLI consumer boundary"
+  "the documentation index links the Ress migration architecture"
+assert_file_contains "$REPO_DIR/docs/architecture/port-adapters.md" \
+  "A future foreign format or reverse conversion requires a new product decision" \
+  "migration architecture rejects an unused future-format framework"
+assert_file_contains "$REPO_DIR/docs/contracts/repository-format.md" "There is no repository-kind argument" \
+  "repository contract records the single-kind CLI boundary"
 assert_file_contains "$REPO_DIR/docs/contracts/loadout-profile.md" \
   'loadouts/<stable-id>/profile.json' \
   "loadout contract records the stable portable-leaf layout"
@@ -35,26 +48,29 @@ assert_file_contains "$REPO_DIR/docs/workflows/share-apply.md" \
 assert_file_contains "$REPO_DIR/docs/workflows/share-apply.md" \
   "mntg apply https://github.com/example/personal-loadouts" \
   "apply workflow uses the Montage command and an explicit repository source"
-assert_file_contains "$REPO_DIR/docs/contracts/vault-format.md" \
-  'current snapshot is' \
-  "vault contract distinguishes the current snapshot from Git history"
-assert_file_contains "$REPO_DIR/docs/contracts/vault-format.md" \
-  'repository id and exact backup commit' \
-  "vault contract binds restore progress to repository and commit identity"
-assert_file_contains "$REPO_DIR/docs/workflows/backup-restore.md" \
-  'mntg restore --backup before-reinstall --dry-run' \
-  "restore workflow previews an explicit backup selector"
-assert_file_contains "$REPO_DIR/docs/workflows/backup-restore.md" \
-  'local history now diverges' \
-  "retention workflow explains published-remote divergence"
+for removed_doc in \
+  "$REPO_DIR/docs/contracts/vault-format.md" \
+  "$REPO_DIR/docs/contracts/restore-safety.md" \
+  "$REPO_DIR/docs/workflows/backup-restore.md" \
+  "$REPO_DIR/docs/workflows/encrypted-secrets.md"; do
+  [[ ! -e $removed_doc ]] || _fail "retired current documentation still exists: ${removed_doc#"$REPO_DIR/"}"
+done
+_pass
+for removed_stub in "$REPO_DIR/tests/bin/age" "$REPO_DIR/tests/bin/systemctl"; do
+  if [[ -e $removed_stub ]]; then
+    _fail "retired test double still exists: ${removed_stub#"$REPO_DIR/"}"
+  else
+    _pass
+  fi
+done
 assert_file_contains "$REPO_DIR/docs/index.md" "workflows/repository-sync.md" \
   "the documentation index links repository synchronization guidance"
 assert_file_contains "$REPO_DIR/docs/workflows/repository-sync.md" \
   "credential helper, an SSH agent" \
   "synchronization guidance assigns authentication to Git transport"
 assert_file_contains "$REPO_DIR/docs/workflows/repository-sync.md" \
-  "Loadout repositories are designed to be shareable and may be public" \
-  "synchronization guidance distinguishes public loadouts from private vaults"
+  "designed to be shareable and may be public" \
+  "synchronization guidance records the shareable library boundary"
 assert_file_contains "$REPO_DIR/docs/workflows/repository-sync.md" \
   "Divergence is always decision-required" \
   "synchronization guidance explains divergence resolution"
@@ -62,30 +78,27 @@ assert_file_contains "$REPO_DIR/docs/workflows/repository-sync.md" \
   "force-push" \
   "synchronization guidance records the no-force guarantee"
 assert_file_contains "$REPO_DIR/docs/index.md" "workflows/ress-portability.md" \
-  "the documentation index links the bounded Ress port workflow"
+  "the documentation index links the bounded Ress migration workflow"
 assert_file_contains "$REPO_DIR/docs/workflows/ress-portability.md" \
-  "The default is one current snapshot and fresh Montage history" \
-  "port guidance makes current-snapshot import the default"
+  "Montage has one frozen foreign-input boundary" \
+  "migration guidance states the single supported boundary"
 assert_file_contains "$REPO_DIR/docs/workflows/ress-portability.md" \
-  "History translation is slower" \
-  "port guidance explains optional history cost"
+  "does not import Ress vaults, backups, history" \
+  "migration guidance refuses vault and history conversion"
 assert_file_contains "$REPO_DIR/docs/workflows/ress-portability.md" \
-  "Loss and identity decisions" \
-  "port guidance contains an itemized loss matrix"
+  "Decide self-plugin entries explicitly" \
+  "migration guidance explains exact self-plugin decisions"
 assert_file_contains "$REPO_DIR/docs/workflows/ress-portability.md" \
-  "private keys are never ported" \
-  "port guidance records the encryption identity boundary"
+  "private keys" \
+  "migration guidance records the private-authority boundary"
 assert_file_contains "$REPO_DIR/docs/workflows/ress-portability.md" \
-  "Manual copy fallback" \
+  "Manual fallback" \
   "port guidance includes a separate-path manual fallback"
 if rg -n '^\s*ress(?:\s|$)' \
     "$REPO_DIR/docs/contracts/loadout-profile.md" \
     "$REPO_DIR/docs/contracts/loadout-registry.md" \
-    "$REPO_DIR/docs/contracts/vault-format.md" \
-    "$REPO_DIR/docs/contracts/restore-safety.md" \
-    "$REPO_DIR/docs/workflows/share-apply.md" \
-    "$REPO_DIR/docs/workflows/backup-restore.md" >/dev/null; then
-  _fail "current loadout or vault documentation contains a Ress command example"
+    "$REPO_DIR/docs/workflows/share-apply.md" >/dev/null; then
+  _fail "current native loadout documentation contains a Ress command example"
 else
   _pass
 fi
@@ -98,7 +111,6 @@ for current_doc in \
   "$REPO_DIR/docs/vision/vision.md" \
   "$REPO_DIR/docs/vision/principles.md" \
   "$REPO_DIR/docs/architecture/system-overview.md" \
-  "$REPO_DIR/docs/workflows/encrypted-secrets.md" \
   "$REPO_DIR/docs/testing/strategy.md"; do
   if rg -n '(^|[[:space:]`])ress (backup|restore|share|apply|status|set|scan|doctor|link)|bin/ress|lib/ress|\.config/ress|\.local/(share|state)/ress|\.ress-bak' \
       "$current_doc" >/dev/null; then
@@ -119,6 +131,10 @@ assert_equals "$(jq -r '.homepage' "$REPO_DIR/manifest.json")" \
   "manifest uses the independent Montage repository homepage"
 assert_equals "$(jq -r '.version' "$REPO_DIR/manifest.json")" "1.0.0" \
   "manifest starts an independent Montage release line"
+assert_equals "$(jq -c '.kinds' "$REPO_DIR/manifest.json")" '["bar-widget"]' \
+  "manifest registers no scheduler or background service"
+assert_equals "$("$MNTG" --version)" "1.0.0" \
+  "CLI version agrees with independent release metadata"
 assert_file_contains "$REPO_DIR/docs/release/marketplace.md" "omarchy-montage-1.0.0.tar.gz" \
   "marketplace guidance uses Montage-specific release asset names"
 assert_file_contains "$REPO_DIR/docs/release/marketplace.md" "omarchy plugin remove tombychowski.montage" \
@@ -160,27 +176,31 @@ else
   _pass
 fi
 assert_file_contains "$REPO_DIR/docs/media/montage-repositories.svg" \
-  "Ress v1 source → inspect/plan → separate Montage destination" \
+  "Ress v1 source → inspect/decide → separate Montage library item" \
   "current repository diagram shows the separate-path compatibility boundary"
 for checklist_item in \
-  'side-by-side Ress and Montage installation' \
+  'Ress side by side' \
   'ImageMagick `montage`' \
-  'updating or removing either plugin leaves the other working' \
+  'Update and remove either plugin' \
   'Git credential helper or SSH-agent' \
-  'known-public visibility' \
-  'Exact historical restore' \
-  'Ress v1 port validation'; do
+  'ordinary status makes no network request' \
+  'Configured-registry migration' \
+  'Ress v1 migration'; do
   assert_file_contains "$REPO_DIR/docs/testing/fresh-machine-validation.md" "$checklist_item" \
     "fresh-machine validation covers $checklist_item"
 done
 assert_file_contains "$REPO_DIR/docs/testing/fresh-machine-validation.md" \
-  'Expected observations:' \
-  "fresh-machine checks record explicit expected observations"
+  'No clean-machine or rendered result is implied by this checklist' \
+  "fresh-machine checks distinguish planned evidence from executed results"
 assert_file_contains "$REPO_DIR/docs/testing/strategy.md" \
-  'real package transactions' \
+  'real package/AUR transactions' \
   "testing strategy classifies non-automatable package evidence"
+[[ ! -e "$REPO_DIR/defaults/include.txt" && ! -e "$REPO_DIR/defaults/exclude.txt" ]] ||
+  _fail "backup-only default include or exclude list remains"
+_pass
 help_output=$("$MNTG" --help)
-for documented in 'mntg backup' 'mntg restore' 'mntg status' 'mntg doctor' 'mntg link'; do
+for documented in 'mntg status' 'mntg doctor' 'mntg link' 'mntg repository' \
+  'mntg share' 'mntg apply' 'mntg loadout' 'mntg resource' 'mntg port ress inspect'; do
   [[ $help_output == *"$documented"* ]] || _fail "CLI help omits documented command: $documented"
 done
 _pass

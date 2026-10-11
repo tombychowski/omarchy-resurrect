@@ -55,6 +55,7 @@ loadout_check_json() {
 }
 
 registry_recover_operation() {
+  (( DRY_RUN )) && return 0
   [[ $(jq -r '.operation == null' <<<"$REGISTRY") == true ]] && return 0
   local kind target action rid resource observation state next
   kind=$(jq -r '.operation.kind' <<<"$REGISTRY")
@@ -174,6 +175,14 @@ repair_loadout() {
       evidence=$(jq -c '.evidence' <<<"$observation")
       if [[ $(jq -r '.state' <<<"$observation") == present ]]; then
         registry_set_claim_result "$id" "$rid" healthy present "$evidence"
+      elif [[ $(jq -r '.item.kind' <<<"$entry") == package ]] &&
+           ! jq -e '.item.requested.channels | index("native")' <<<"$entry" >/dev/null &&
+           printf '%s\n' "${AUR_DENIED[@]:-}" | grep -qxF -- "$(jq -r '.item.name' <<<"$entry")"; then
+        registry_set_claim_result "$id" "$rid" deferred missing "$evidence" "AUR package denied by policy"
+      elif [[ $(jq -r '.item.kind' <<<"$entry") == package ]] &&
+           ! jq -e '.item.requested.channels | index("native")' <<<"$entry" >/dev/null &&
+           [[ $AUR_MODE == skip ]]; then
+        registry_set_claim_result "$id" "$rid" deferred missing "$evidence" "AUR build left for later"
       else
         registry_set_claim_result "$id" "$rid" pending missing "$evidence" "package remains missing"
       fi
@@ -259,7 +268,7 @@ update_loadout() {
   if [[ -n $repository_id && -z ${2:-} ]]; then
     if repository_registry_load 2>/dev/null; then
       configured_entry=$(jq -c --arg id "$repository_id" \
-        '.repositories[] | select(.type == "loadouts" and .id == $id)' <<<"$REPOSITORY_REGISTRY" | head -1)
+        '.repositories[] | select(.id == $id)' <<<"$REPOSITORY_REGISTRY" | head -1)
       [[ -z $configured_entry ]] || source=$(jq -r '.name' <<<"$configured_entry")
     fi
   fi
@@ -280,10 +289,11 @@ update_loadout() {
     resolved_commit=""
   fi
   new_profile="$APPLY_WORK/normalized.json"
+  repository_migration_notice
   normalize_profile "$APPLY_WORK/profile.json" "$new_profile"
   digest=$(profile_digest "$new_profile")
   if [[ $digest == "$(jq -r '.digest' <<<"$old")" ]]; then
-    if [[ -n $repository_id && $resolved_commit != "$(jq -r '.commit' <<<"$old")" ]]; then
+    if (( ! DRY_RUN )) && [[ -n $repository_id && $resolved_commit != "$(jq -r '.commit' <<<"$old")" ]]; then
       now=$(date -u +%s)
       next=$(jq -c --arg id "$id" --arg source "$(strip_credentials "$source")" \
         --arg commit "$resolved_commit" --argjson now "$now" '
@@ -318,7 +328,21 @@ update_loadout() {
   if (( PORCELAIN )); then
     while IFS= read -r rid; do emit "LOG|plan: CONFLICT $rid"; done < <(jq -r '.[] | select(.action == "conflict") | .item.id' <<<"$plan")
   else jq -r '.[] | select(.action == "conflict") | "  CONFLICT  " + .item.id' <<<"$plan"; fi
-  if (( DRY_RUN )); then emit "DONE|ok|update dry run complete"; (( PORCELAIN )) || printf 'Dry run — nothing was changed.\n'; return 0; fi
+  if (( DRY_RUN )); then
+    if [[ -n $repository_id ]]; then
+      loadout_status_evidence_record_update "$id" "$repository_id" "$loadout_id" \
+        "$(jq -r '.commit' <<<"$old")" "$resolved_commit" "$digest" ||
+        die "could not record update preview evidence"
+    fi
+    if [[ -n $repository_id ]]; then
+      emit "LOG|advisory update evidence recorded; applied provenance unchanged"
+      (( PORCELAIN )) || printf 'Dry run — applied state and machine resources were unchanged; advisory update evidence was recorded.\n'
+    else
+      (( PORCELAIN )) || printf 'Dry run — nothing was changed.\n'
+    fi
+    emit "DONE|ok|update dry run complete"
+    return 0
+  fi
   confirm "Update this tracked loadout?" || die "cancelled"
 
   registry_begin_operation update "$id" "$(jq -nc --argjson old "$withdrawn" --argjson plan "$plan" '

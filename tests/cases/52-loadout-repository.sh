@@ -7,7 +7,7 @@ assert_one_json() {
 }
 
 repo="$SANDBOX/loadout-library"
-mntg repository init loadouts "$repo" --id personal-library --json
+mntg repository init "$repo" --id personal-library --json
 assert_ok "loadout repository initialization succeeds"
 assert_one_json "initialization emits one JSON result"
 jq -e '.kind=="montage-loadout-repository-initialized" and
@@ -16,7 +16,7 @@ jq -e '.kind=="montage-loadout-repository-initialized" and
 assert_dir "$repo/loadouts" "repository has the loadout collection"
 assert_equals "$(git -C "$repo" rev-list --count HEAD)" "1" "initialization records one commit"
 
-mntg repository configure personal "$repo" loadouts --json
+mntg repository configure personal "$repo" --json
 assert_ok "initialized repository can be configured"
 
 write_package_loadout "$SANDBOX/alpha-source" "Alpha display" alpha
@@ -93,6 +93,6 @@ assert_file "$alpha_path" "hostile identity refusal preserves the selected item"
 existing="$SANDBOX/existing"
 mkdir -p "$existing"
 printf 'owned\n' >"$existing/value"
-mntg repository init loadouts "$existing" --id another-library --json
+mntg repository init "$existing" --id another-library --json
 assert_fails "initialization refuses an existing destination"
 assert_file_contains "$existing/value" "owned" "initialization preserves existing content"

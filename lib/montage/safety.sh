@@ -4,24 +4,23 @@
 # sanitization, source normalization, pinned Git retrieval, and web-app parsing.
 #
 # Depends on core.sh for output helpers and common flags. Reads HOME and
-# OMARCHY_DIR; owns source normalization and web-app parser limits. Used by vault capture,
-# restore and verification plus loadout sharing, apply and lifecycle workflows.
+# OMARCHY_DIR; owns source normalization and web-app parser limits. Used by
+# loadout sharing, apply, lifecycle, repository, and focused migration workflows.
 # Definitions only: sourcing this module performs no network or machine work.
 
 
 
-# A vault chooses the text we print about it. Escape sequences in that text can
+# A repository or profile chooses text we print. Escape sequences in that text can
 # repaint the screen — including the confirmation prompt shown just before a
-# sudo — so nothing from a vault reaches the terminal with control bytes in it.
+# sudo — so nothing from untrusted input reaches the terminal with control bytes.
 plain() { printf '%s' "$1" | tr -d '\000-\037\177'; }
-# ---------------------------------------------------- untrusted vault input
+# ------------------------------------------------ untrusted repository input
 #
-# A vault is not necessarily yours. `restore --from <git-url>` fetches one over
-# the network, so every value read out of a vault or a loadout is attacker
-# controlled until it matches one of these. A name that does not match is
-# dropped, never quoted and passed along.
+# A loadout repository is not necessarily yours. Every value read from a
+# repository or imported profile is attacker controlled until it matches one of
+# these validators. A name that does not match is dropped, never passed along.
 #
-# The leading-character rules are load-bearing: they are what stops a vault
+# The leading-character rules are load-bearing: they are what stops a profile
 # entry like `-U` or `--overwrite=/etc/passwd` from arriving as an *option* on a
 # root pacman command line, and what stops an id of `../../..` from becoming a
 # path that gets removed.
@@ -32,7 +31,6 @@ valid_icon()  { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; }
 valid_sha()   { [[ $1 =~ ^[0-9a-f]{40}$ ]]; }
 valid_label() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9\ ._+\&-]{0,63}$ ]]; }
 valid_https() { [[ $1 =~ ^https://[A-Za-z0-9._~:/?\#@!\$\&\(\)*+,\;=%-]{3,512}$ ]]; }
-valid_unit()  { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}\.(service|socket|timer|target|path|slice)$ ]]; }
 
 # Accept both active-theme state layouts. Current Omarchy writes theme.name;
 # older or alternate layouts may point `theme` at the selected theme instead.
@@ -50,16 +48,14 @@ active_theme_name() {
 }
 # A schema version is compared with (( )), and bash arithmetic is not a numeric
 # context — it evaluates the *contents* of a bare name, recursively, and performs
-# command substitution inside an array subscript. A vault saying its
-# schemaVersion is `CFG[$(...)]` therefore ran that command, before any prompt,
-# on the `restore --from` path that fetches a stranger's vault. Nothing reaches
-# arithmetic now without matching this first.
+# command substitution inside an array subscript. Untrusted input such as
+# `CFG[$(...)]` must therefore never reach arithmetic without matching this
+# validator first.
 valid_int()   { [[ $1 =~ ^[0-9]{1,9}$ ]]; }
 
-# Your own plugins and themes may legitimately be cloned over SSH, so restoring
-# your own vault accepts the ssh forms too — but never `file://`, never a bare
-# local path, and never anything that could start with `-` and be read as a git
-# option. A shared loadout stays https-only: it came from a stranger.
+# Configured libraries may legitimately use SSH, but never `file://`, a bare
+# local path, or a value beginning with `-` that Git could read as an option.
+# Resource definitions shared by a loadout stay public-HTTPS only.
 valid_git_remote() {
   valid_https "$1" && return 0
   [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9._~/-]{1,400}$ ]] && return 0
@@ -68,7 +64,7 @@ valid_git_remote() {
 }
 
 # URL user information is transport-only. It may authenticate the immediate
-# request that received it, but it never belongs in config, a vault, a profile,
+# request that received it, but it never belongs in config, a profile,
 # registry state, generated instructions, or terminal output.
 url_has_credentials() {
   [[ $1 =~ ^[A-Za-z][A-Za-z0-9+.-]*://[^/@]+@ ]]
@@ -96,17 +92,6 @@ safe_control_file() {
   root_path=$(realpath -e -- "$root" 2>/dev/null) || return 1
   candidate="$root/$relative"
   [[ -f $candidate && ! -L $candidate ]] || return 1
-  resolved=$(realpath -e -- "$candidate" 2>/dev/null) || return 1
-  [[ $resolved == "$root_path"/* ]] || return 1
-  printf '%s' "$resolved"
-}
-
-safe_artifact_dir() {
-  local root="$1" relative="$2" root_path candidate resolved
-  [[ -n $root && -n $relative && $relative != /* ]] || return 1
-  root_path=$(realpath -e -- "$root" 2>/dev/null) || return 1
-  candidate="$root/$relative"
-  [[ -d $candidate && ! -L $candidate ]] || return 1
   resolved=$(realpath -e -- "$candidate" 2>/dev/null) || return 1
   [[ $resolved == "$root_path"/* ]] || return 1
   printf '%s' "$resolved"
@@ -169,7 +154,7 @@ desktop_exec_words() {
 # not a flag — a second URL, a `;`, a command — fails this and the launcher is
 # refused rather than rebuilt.
 #
-# Flags are installed as extra arguments to the browser, so a vault can hand it
+# Flags are installed as extra arguments to the browser, so a profile can hand it
 # something like --user-data-dir=/path. That is the point of carrying them, and
 # it is stated in the README; what the grammar rules out is a second word, a
 # quote or a backslash, so no flag can become a second command or swallow the
@@ -177,11 +162,25 @@ desktop_exec_words() {
 WEBAPP_FLAG_RE='^--[A-Za-z0-9][A-Za-z0-9-]{0,31}(=[A-Za-z0-9._:/@,+-]{1,128})?$'
 
 # Nothing a launcher needs is anywhere near this long, and the parse below walks
-# the line a character at a time: a vault is a stranger's file, so a 40 KB Exec
-# line would otherwise buy a 30-second stall in verify and in every restore. The
+# the line a character at a time: a profile may be hostile, so a 40 KB Exec line
+# would otherwise buy a long parse stall. The
 # cap is what makes that cost bounded instead of quadratic on someone else's
 # input.
 WEBAPP_MAX_EXEC=1024
+
+# Only the first Exec line is the launcher. A second one is a Desktop Action
+# and therefore executable behavior outside the loadout schema.
+launcher_exec() { sed -n 's/^Exec=//p' "$1" | head -1; }
+
+# Package-owned launchers already exist on a clean Omarchy installation and
+# must not be republished as user-selected loadout resources.
+package_owned_launcher() {
+  local path="$1" name="$2" shipped
+  for shipped in "$OMARCHY_DIR/applications/$name" "/usr/share/applications/$name"; do
+    [[ -f $shipped ]] && cmp -s -- "$path" "$shipped" && return 0
+  done
+  return 1
+}
 
 # The one shape a launcher comes back from: omarchy-launch-webapp, one http(s)
 # URL, then zero or more flags. Prints "<launcher>\t<url>\t<flags>"; returns 1 for
@@ -210,6 +209,14 @@ webapp_parts() {
   printf '%s\t%s\t%s' "${words[0]}" "$url" "${flags[*]:-}"
 }
 
+# A loadout can reproduce exactly one validated launcher command. Desktop
+# Actions or another Exec line are deliberately outside that authority.
+launcher_travels() {
+  [[ -f $1 ]] || return 1
+  [[ $(grep -c '^Exec=' "$1" 2>/dev/null || true) == 1 ]] || return 1
+  webapp_parts "$(launcher_exec "$1")" >/dev/null
+}
+
 webapp_url_has_credentials() {
   local words=() word
   while IFS= read -r word; do [[ -n $word ]] && words+=("$word"); done \
@@ -223,31 +230,12 @@ webapp_url_has_credentials() {
 }
 
 # The launcher line to hand the installer as its custom exec, rebuilt from the
-# pieces webapp_parts validated. It keeps the launcher the vault used — asking
-# for the plain form when the capture said or-focus would silently change what
+# pieces webapp_parts validated. It keeps the launcher the profile used — asking
+# for the plain form when the definition said or-focus would silently change what
 # the launcher does — and writes a literal percent the way the spec wants it read
 # back.
-webapp_exec_line() {
-  local launcher="$1" url="$2"; shift 2
-  local flag
-  printf '%s %s' "$launcher" "${url//%/%%}"
-  for flag in "$@"; do printf ' %s' "$flag"; done
-}
-
-# Read a newline-separated list, keep only what `predicate` accepts, and report
-# how much was thrown away so a tampered vault is loud rather than silent.
-keep_valid() {
-  local predicate="$1" category="$2" what="$3" line dropped=0
-  KEPT=()
-  while IFS= read -r line; do
-    [[ -n $line ]] || continue
-    if "$predicate" "$line"; then KEPT+=("$line"); else dropped=$((dropped + 1)); fi
-  done
-  (( dropped == 0 )) || step_warn "$category" "refused $dropped unsafe $what from this vault"
-}
-
 # Clone `url` into `target` at exactly `sha`, detached. A branch head moves; the
-# commit that was captured — or that a loadout's author published and a reviewer
+# commit that a loadout's author published and a reviewer
 # looked at — does not. Without this, restoring or applying installs whatever
 # upstream happens to contain today, which is code nobody agreed to run.
 clone_pinned() {
@@ -280,10 +268,9 @@ normalize_source() {
   # A source that already names its transport reaches git as given. git
   # understands ssh://, git:// and the scp form git@host:path, and the https
   # prepend at the end of this function would otherwise turn any of them into
-  # https://ssh://host/... (which is what `restore --from ssh://...` used to
-  # hand the clone). valid_git_remote accepts those spellings for your own
-  # vault, so they have to survive this far. A local path is handled above and
-  # file:// is still refused, by valid_git_remote.
+  # https://ssh://host/.... Configured remotes accept those spellings, so they
+  # have to survive this far. A local path is handled above and file:// is still
+  # refused by valid_git_remote.
   case "$src" in
     http://*|https://*) ;;  # the https forms the shorthands below are written for
     *://*|*@*:*) printf '%s' "$src"; return 0 ;;
@@ -310,14 +297,6 @@ normalize_source() {
 # Two spellings of the same repository. Compared after credentials, a trailing
 # .git and a trailing slash are taken off, because none of the three changes
 # where the URL points.
-same_remote() {
-  local a b
-  a=$(strip_credentials "$1"); b=$(strip_credentials "$2")
-  a="${a%.git}"; b="${b%.git}"
-  a="${a%/}";    b="${b%/}"
-  [[ -n $a && $a == "$b" ]]
-}
-
 # Produce a credential-free canonical public repository URL for generated
 # instructions. GitHub SSH spellings normalize to the same HTTPS identity.
 canonical_share_url() {

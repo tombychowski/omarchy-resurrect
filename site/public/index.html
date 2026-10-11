@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Montage for Omarchy</title>
-<meta name="description" content="Montage captures, restores, and verifies Omarchy machines with private vault history, multi-loadout repositories, and explicit migration tools.">
+<meta name="description" content="Compose, share, apply, and reconcile portable Omarchy loadouts.">
 <meta name="theme-color" content="#0d1117">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Montage">
 <meta property="og:title" content="Montage for Omarchy">
-<meta property="og:description" content="Reconstruct an Omarchy machine with inspectable local repositories, exact backup history, and deliberate loadouts.">
+<meta property="og:description" content="Inspectable loadout libraries with deliberate application and conservative synchronization.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Montage for Omarchy">
-<meta name="twitter:description" content="Inspectable Omarchy backup, restore, loadout libraries, and explicit Ress v1 porting.">
+<meta name="twitter:description" content="Portable Omarchy loadouts, composed and reconciled under explicit user control.">
 <style>
   :root { --bg:#0d1117; --panel:#11161d; --line:#26313d; --fg:#c9d1d9; --dim:#84909c; --accent:#7fd1c1; --warm:#e3b341; }
   * { box-sizing:border-box; }
@@ -46,16 +46,17 @@
     <div class="mark">Montage · for Omarchy</div>
     <a class="button" href="https://github.com/tombychowski/omarchy-montage">View on GitHub</a>
   </div>
-  <h1>Rebuild the machine.<br><em>Keep the decisions visible.</em></h1>
-  <p class="muted">Montage captures reconstructible Omarchy state into private,
-    local-first vault history; maintains shareable multi-loadout repositories;
-    and previews every restore or apply before mutation.</p>
-<pre><span class="comment"># capture and inspect immutable history</span>
-<span class="prompt">$</span> mntg backup
-<span class="prompt">$</span> mntg backup list
+  <h1>Shape the setup.<br><em>Keep every choice visible.</em></h1>
+  <p class="muted">Montage composes constrained, portable Omarchy loadouts;
+    publishes them in inspectable libraries; and applies and reconciles them
+    without claiming unrelated machine state.</p>
+<pre><span class="comment"># inspect a library and preview one loadout</span>
+<span class="prompt">$</span> mntg repository loadouts personal --json
+<span class="prompt">$</span> mntg apply --dry-run personal --loadout workstation
 
-<span class="comment"># restore one exact snapshot</span>
-<span class="prompt">$</span> mntg restore --backup before-reinstall</pre>
+<span class="comment"># apply, then reconcile from exact recorded provenance</span>
+<span class="prompt">$</span> mntg apply personal --loadout workstation
+<span class="prompt">$</span> mntg loadout check --json</pre>
 </header>
 
 <section>
@@ -63,49 +64,52 @@
 <pre><span class="prompt">$</span> omarchy plugin add https://github.com/tombychowski/omarchy-montage --enable
 <span class="prompt">$</span> ~/.config/omarchy/plugins/tombychowski.montage/bin/mntg link
 <span class="prompt">$</span> mntg doctor</pre>
-  <p>No install hook, no account, and no hosted control plane. The plugin id is
+  <p>No account and no hosted control plane. The plugin id is
     <code>tombychowski.montage</code>; the command is <code>mntg</code>.</p>
 </section>
 
 <section>
-  <h2>Two repositories, two jobs</h2>
+  <h2>One artifact, three surfaces</h2>
   <div class="grid">
-    <div class="card"><h3>Private vault</h3><p>Selected configuration, inventory,
-      optional encrypted secrets, labels, and immutable backup commits. Keep the
-      GitHub remote private.</p></div>
-    <div class="card"><h3>Loadout library</h3><p>Multiple stable, shareable items
-      for packages, pinned plugins, reconstructible web apps, and one theme—no
-      arbitrary commands or dotfiles.</p></div>
+    <div class="card"><h3>Libraries</h3><p>Browse stable loadouts in validated
+      local Git repositories and synchronize with conservative, explicit
+      history actions.</p></div>
+    <div class="card"><h3>Compose / Share</h3><p>Select packages, pinned
+      plugins, reconstructible web apps, and one theme. Arbitrary files and
+      commands do not travel.</p></div>
+    <div class="card"><h3>Applied Loadouts</h3><p>See drift, repair work, and
+      explicitly previewed updates from exact local evidence.</p></div>
   </div>
-<pre><span class="prompt">$</span> mntg repository sync personal
-<span class="prompt">$</span> mntg share --repository personal --loadout minimal
-<span class="prompt">$</span> mntg apply https://github.com/you/omarchy-loadouts.git --loadout minimal --dry-run</pre>
+<pre><span class="prompt">$</span> mntg repository sync personal --json
+<span class="prompt">$</span> mntg share --repository personal --loadout minimal --custom --select package:fd
+<span class="prompt">$</span> mntg status --json</pre>
 </section>
 
 <section>
   <h2>Trust boundaries</h2>
   <div class="grid">
-    <div class="card"><h3>Preview and consent</h3><p>Overwrite confirmation never
-      answers AUR-build or persistent-service questions.</p></div>
-    <div class="card"><h3>Preserve first</h3><p>Restore is additive and keeps
-      replaced files as <code>*.montage-bak</code>.</p></div>
-    <div class="card"><h3>Conservative Git</h3><p>Fast-forward pull and ordinary
-      push only. Divergence is decision-required; no force-push or reset.</p></div>
+    <div class="card"><h3>Preview and consent</h3><p>Application is additive,
+      and AUR work remains a separate choice.</p></div>
+    <div class="card"><h3>Preserve unrelated state</h3><p>Cleanup follows
+      validated native claims; it never infers broad ownership.</p></div>
+    <div class="card"><h3>Conservative Git</h3><p>Fast-forward pull and
+      ordinary push only. Divergence is decision-required.</p></div>
     <div class="card"><h3>CLI authority</h3><p>The panel consumes versioned
-      <code>mntg</code> output and never interprets Git or repository files.</p></div>
+      <code>mntg</code> output and never interprets Git or state files.</p></div>
   </div>
 </section>
 
 <section>
-  <h2>Moving from Ress</h2>
-  <p>Montage is a separate plugin with separate commands and data. It can be
-    installed beside Ress, then explicitly port selected Ress v1 artifacts into
-    new Montage repositories.</p>
-<pre><span class="prompt">$</span> mntg port ress inspect /path/to/ress-vault --json
-<span class="prompt">$</span> mntg port ress plan /path/to/ress-vault --destination /path/to/montage-vault --json</pre>
-  <p class="warning">There is no shared-live-directory mode and no automatic
-    migration. Sources remain untouched; representational loss and self-plugin
-    choices are explicit.</p>
+  <h2>Moving one Ress loadout</h2>
+  <p>Montage has one focused compatibility boundary. It reads one Ress v1
+    profile and publishes a separately selected Montage library item.</p>
+<pre><span class="prompt">$</span> mntg port ress inspect /path/to/ress-profile --json
+<span class="prompt">$</span> mntg --dry-run port ress import loadout /path/to/ress-profile \
+    --repository personal --loadout imported-ress \
+    --ress-plugin omit --montage-plugin omit --json</pre>
+  <p class="warning">The source remains untouched. Montage adopts no Ress
+    configuration, operational state, credentials, machine identity, or Git
+    history, and provides no reverse conversion.</p>
 </section>
 
 <footer><a href="https://github.com/tombychowski/omarchy-montage">Montage on GitHub</a>

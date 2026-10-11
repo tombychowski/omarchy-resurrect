@@ -1,6 +1,6 @@
 # Applied-loadout registry
 
-The applied-loadout registry is private, machine-local desired state owned exclusively by `bin/mntg`. It is stored at `${XDG_STATE_HOME:-$HOME/.local/state}/montage/loadouts.json`; an absent file means that no loadouts are tracked. It is not part of a vault repository, loadout repository, portable profile, or Ress port artifact.
+The applied-loadout registry is private, machine-local desired state owned exclusively by `bin/mntg`. It is stored at `${XDG_STATE_HOME:-$HOME/.local/state}/montage/loadouts.json`; an absent file means that no loadouts are tracked. It is not part of a loadout library, portable profile, or Ress migration artifact.
 
 ## Version 1 shape
 
@@ -20,7 +20,7 @@ Canonical resource identities are `package:<name>`, `plugin:<id>`, `webapp:<labe
 
 Ress registries, ownership claims, cleanup observations, and imported provenance are never copied into this registry or treated as Montage authority. A ported portable profile must be confirmed and observed on this machine through the ordinary Montage apply plan before it can create native claims. Unknown legacy ownership fields make the exact registry invalid rather than silently granting removal rights.
 
-A registry record never authorizes an arbitrary path. Mutation reconstructs targets from validated logical identities and re-inspects machine evidence immediately before cleanup. Shared, pre-existing, missing, changed, symlinked, critical, and unverifiable resources follow the preservation rules in [Restore safety](restore-safety.md).
+A registry record never authorizes an arbitrary path. Mutation reconstructs targets from validated logical identities and re-inspects machine evidence immediately before cleanup. Shared, pre-existing, missing, changed, symlinked, critical, and unverifiable resources follow the preservation rules in the `loadout-preservation` OpenSpec capability.
 
 ## Validation and writes
 
@@ -32,6 +32,11 @@ The operation journal is persisted before machine mutation and updated after eac
 
 ## Resource-specific evidence and cleanup
 
+Failed or partially failed package inventory is unavailable evidence, not an
+empty installed-package set. Planning records affected packages as unverifiable
+without installing them or granting newly inferred removal authority. A later
+successful observation does not retroactively prove Montage introduced them.
+
 - Packages are present by validated package name. Cleanup invokes direct `pacman -R` targets only, respects dependency refusal, never cascades or removes orphans, and rejects critical Montage/Arch/Omarchy runtime packages.
 - Plugins and Git themes compare safe remote, pinned commit, dirty worktree, target type, and required metadata. Clean removal is delegated to the corresponding `omarchy` command.
 - Web apps compare validated launcher semantics, URL, icon, and launcher digest. Cleanup is delegated to `omarchy webapp remove` only after matching evidence.
@@ -39,6 +44,16 @@ The operation journal is persisted before machine mutation and updated after eac
 
 Registry evidence describes the last recorded transaction; `mntg loadout check` performs the live comparison. Read-only commands do not repair or rewrite state.
 
+Lifecycle dry runs do not persist operation recovery or update applied source,
+commit, timestamps, registry revision, or claims, including when a newer source
+commit contains identical profile content. Changed-content library previews
+may record separate advisory update evidence as described below.
+
 ## Queries and exclusion
 
-`mntg loadout list/show` and `mntg resource list/show` are the supported consumer boundary. QML does not read this file. Registry content is excluded from `mntg share` by the profile's fixed schema and from vault capture because Montage state is self-excluded. Sources are stored without URL credentials; fetched repositories, PKGBUILDs, secrets, and arbitrary executable content are never stored here.
+`mntg loadout list/show` and `mntg resource list/show` are the supported consumer boundary. QML does not read this file. Registry content is excluded from `mntg share` by the profile's fixed schema. Sources are stored without URL credentials; fetched repositories, PKGBUILDs, credential material, and arbitrary executable content are never stored here.
+
+An independent `status-evidence.json` file contains only advisory update-preview
+identity and digest facts. It cannot authorize install or cleanup. Status uses a
+row only while its local loadout, repository, item, and baseline commit still
+match; malformed present evidence makes status unavailable.

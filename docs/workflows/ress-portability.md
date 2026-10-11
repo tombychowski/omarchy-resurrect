@@ -1,174 +1,103 @@
-# Port Ress v1 artifacts
+# Import a Ress v1 loadout
 
-Ress compatibility is a bounded interchange feature, not a shared-state mode.
-Montage supports the documented Ress 1.2.0 schema-1 loadout and vault controls,
-including the older `resurrect.json` manifest spelling. It does not read Ress
-configuration or operational state during ordinary use and does not promise to
-follow future Ress formats.
+Montage has one frozen foreign-input boundary: it can inspect and import a
+supported Ress v1 portable `profile.json` into one explicitly selected Montage
+loadout library item. This is migration into Montage, not shared state or a
+general conversion framework.
 
-Ress v1 is the first adapter on Montage's format-neutral port lifecycle. The
-documented `ress` command selector is a convenient alias for canonical format
-id `ress-v1`; JSON and porcelain reports always identify `ress-v1`. Shared
-destination, history-read, loss-consent, publication, and report rules are
-documented in the [port adapter architecture](../architecture/port-adapters.md).
+Montage does not import Ress vaults, backups, history, configuration, remotes,
+locks, runtime state, applied claims, cleanup ownership, credentials, private
+keys, or machine identity. It does not export anything to Ress.
 
-Always use disposable copies or distinct source and destination paths. Every
-flow below starts with inspection and a dry run. Import never changes the Ress
-source; export never changes a Montage repository or selected commit.
-
-## Inspect first
+## Prepare a Montage library
 
 ```bash
-mntg port ress inspect /path/to/ress-profile --json
-mntg port ress inspect /path/to/ress-vault --json
-mntg port ress plan /path/to/ress-vault \
-  --destination "$HOME/.local/share/montage/imported-vault" --json
+mntg repository init "$HOME/.local/share/montage/loadouts" --id personal-loadouts
+mntg repository configure personal "$HOME/.local/share/montage/loadouts"
 ```
 
-The versioned report names the artifact type and version, canonical source,
-proposed destination, selected revisions, warnings, itemized losses, and planned
-mutations. A future version, symlink, escaping path, malformed control, source
-and destination overlap, or non-empty destination is refused rather than
-treated as acceptable loss.
+The destination must be a configured, valid, clean loadout repository. Choose
+a new bounded lowercase stable id for the imported item; migration never
+replaces an existing item implicitly.
 
-## Import one current loadout
+The source tree and destination library must be separate: neither may contain
+the other. Destination ancestors must be canonical nonsymlink directories.
+Preview checks these boundaries and confirmed import checks them again while
+holding the library lock.
 
-First initialize and configure a separate Montage library, then preview:
+## Inspect the source
 
 ```bash
-mntg repository init loadouts "$HOME/.local/share/montage/loadouts" \
-  --id personal-loadouts
-mntg repository configure personal "$HOME/.local/share/montage/loadouts" loadouts
-mntg port ress inspect /path/to/ress-profile --json
-mntg --dry-run port ress import loadout /path/to/ress-profile \
-  --repository personal --loadout workstation --json
+mntg port ress inspect /path/to/ress-loadout --json
 ```
 
-Publish only after reviewing the report:
+The source may be the containing directory or its contained regular
+`profile.json`. A symlinked control, malformed or future-version profile,
+credential-bearing URL, extra executable/ownership field, Ress vault, or
+backup/history control is refused before a destination is changed. Other files
+beside a valid profile are ignored with a warning and never become Montage
+authority.
+
+JSON inspection returns one `montage-ress-loadout-migration` object with:
+
+- `format: "ress-v1"` and the source/supported schema versions;
+- contained source identity and an optional selected destination identity;
+- `compatible`, `ready`, and a bounded refusal or decision reason;
+- warnings, itemized self-plugin losses, and exact decisions; and
+- `publication.planned`, `publication.published`, and the resulting commit.
+
+Inspection is read-only. Human output presents the same compatibility and
+decision facts; porcelain uses `BEGIN|ress-migration|1`, `RESS|1`, optional
+`RESS_LOSS` records, and one `DONE` record.
+
+## Decide self-plugin entries explicitly
+
+If the profile contains Ress or Montage itself, the result names the applicable
+decision. `--yes` does not answer it.
 
 ```bash
-mntg port ress import loadout /path/to/ress-profile \
-  --repository personal --loadout workstation
-```
-
-The portable `profile.json` remains schema-1 `omarchy-loadout` data. Montage
-adds it as one new stable item and one new commit; it does not replace siblings,
-inherit the Ress remote, or adopt applied-state ownership.
-
-## Import the current vault snapshot
-
-The default is one current snapshot and fresh Montage history:
-
-```bash
-mntg port ress inspect /path/to/ress-vault --json
-mntg --dry-run port ress import vault /path/to/ress-vault \
-  --destination "$HOME/.local/share/montage/imported-vault" \
+mntg port ress inspect /path/to/ress-loadout \
   --ress-plugin omit --montage-plugin include --json
-mntg port ress import vault /path/to/ress-vault \
-  --destination "$HOME/.local/share/montage/imported-vault" \
+```
+
+For each present self-plugin, choose exactly `include` or `omit`. There is no
+implicit Ress-to-Montage mapping and no wildcard loss acceptance. Credentials,
+private keys, executable authority, and cleanup ownership are invalid input,
+not waivable losses.
+
+## Preview and import one item
+
+```bash
+mntg --dry-run port ress import loadout /path/to/ress-loadout \
+  --repository personal --loadout workstation \
+  --ress-plugin omit --montage-plugin include --json
+
+mntg port ress import loadout /path/to/ress-loadout \
+  --repository personal --loadout workstation \
   --ress-plugin omit --montage-plugin include
 ```
 
-The destination must be absent or explicitly empty. Montage creates new
-repository and machine-lineage ids, translates `ress.json` or `resurrect.json`
-to `backup.json`, translates replacement suffixes to `.montage-bak`, and makes
-one new commit. It inherits no remote or source commit identity.
+Omit decision options that are `not-applicable`. Preview and live planning use
+the same warnings, losses, decisions, compatibility, and destination identity.
+The live command revalidates the unchanged source after confirmation, stages
+one native profile, validates it, publishes it through the repository lock and
+journal boundary, and creates one commit for the content change.
 
-## Optionally translate history
-
-History translation is slower because every first-parent Ress revision is
-materialized and validated in isolation before anything is published:
-
-```bash
-mntg port ress plan /path/to/ress-vault \
-  --destination "$HOME/.local/share/montage/imported-history" \
-  --history --json
-mntg --dry-run port ress import vault /path/to/ress-vault \
-  --destination "$HOME/.local/share/montage/imported-history" \
-  --history --json
-```
-
-Any bad revision stops the default operation. To select the reported compatible
-subset, accept only that itemized loss:
+The source bytes, source Git state/remotes, destination envelope/remote,
+sibling loadouts, and local applied-loadout registry remain unchanged. The
+imported item gains no machine ownership until a later ordinary command such as:
 
 ```bash
-mntg --dry-run port ress import vault /path/to/ress-vault \
-  --destination "$HOME/.local/share/montage/imported-history" \
-  --history --compatible-only \
-  --accept-loss unsupported-history-revisions --json
-mntg port ress import vault /path/to/ress-vault \
-  --destination "$HOME/.local/share/montage/imported-history" \
-  --history --compatible-only \
-  --accept-loss unsupported-history-revisions
+mntg apply personal --loadout workstation --dry-run
+mntg apply personal --loadout workstation
 ```
 
-The result maps source commits to new Montage commits. Source hashes and remotes
-remain evidence only and are never claimed as native Montage history.
+That apply observes the current machine and establishes native Montage
+provenance and cleanup policy under the ordinary Loadout lifecycle.
 
-## Export a disposable Ress v1 copy
+## Manual fallback
 
-Inspect or query the exact native item first, then dry-run the export:
-
-```bash
-mntg repository loadout show personal workstation --json
-mntg --dry-run port ress export loadout personal --loadout workstation \
-  --destination /tmp/ress-workstation \
-  --accept-loss montage-repository-metadata --json
-mntg port ress export loadout personal --loadout workstation \
-  --destination /tmp/ress-workstation \
-  --accept-loss montage-repository-metadata
-```
-
-For a backup, inspect the exact commit before exporting it:
-
-```bash
-mntg backup show before-reinstall --json
-mntg --dry-run --vault "$HOME/.local/share/montage/vault" \
-  port ress export backup --backup before-reinstall \
-  --destination /tmp/ress-backup \
-  --accept-loss montage-vault-identity --json
-mntg --vault "$HOME/.local/share/montage/vault" \
-  port ress export backup --backup before-reinstall \
-  --destination /tmp/ress-backup \
-  --accept-loss montage-vault-identity
-```
-
-Exports contain only Ress v1 controls and representable payload in a separate,
-validated directory. The destination is never implicitly overwritten.
-
-## Loss and identity decisions
-
-| Code or choice | Meaning | Can it be accepted? |
-|---|---|---|
-| `montage-repository-metadata` | A Ress loadout leaf cannot carry Montage repository id, stable selector, or commit provenance | Yes, by exact code |
-| `montage-vault-identity` | Ress v1 cannot carry the native vault id, machine-lineage id, labels, or backup commit identity | Yes, by exact code |
-| `unsupported-history-revisions` | The reported source commits are omitted from an explicitly selected compatible subset | Yes, by exact code |
-| `--ress-plugin include\|omit` | Preserve or omit the Ress plugin as Ress; never silently map it to Montage | Explicit choice required when present |
-| `--montage-plugin include\|omit\|map-ress` | Preserve, omit, or deliberately map the Montage plugin in a Ress export | Explicit choice required when present |
-| Credentials, containment, private keys, execution consent, or cleanup ownership | Safety or authority cannot be represented safely | Never |
-
-`--yes` confirms publication; it does not accept a loss or decide a self-plugin.
-There is no wildcard loss acceptance.
-
-Encrypted `secrets/secrets.tar.age` ciphertext may be copied byte-for-byte when
-the target format can represent it. Encryption configuration, recipient
-identity, passphrases, and private keys are never ported. Move a required
-private identity through a separate secure channel.
-
-## Manual copy fallback
-
-If the adapter cannot identify an artifact, preserve the original and make a
-separate working copy before investigating:
-
-```bash
-cp -a -- /path/to/ress-artifact /tmp/ress-artifact-working-copy
-mntg port ress inspect /tmp/ress-artifact-working-copy --json
-```
-
-For a known schema-1 loadout, `profile.json` itself is the portable unit; it can
-be copied into a newly initialized Montage repository at
-`loadouts/<new-stable-id>/profile.json`, then checked with
-`mntg repository validate`. Do not copy `.git`, Ress configuration, remotes,
-locks, restore progress, keys, or applied ownership. For vaults, manual file
-renaming alone is not enough to create `montage.json`, machine lineage, a valid
-`backup.json`, or fresh history; use the inspected import path above.
+If inspection refuses a source, retain the original. Do not make a native item
+by copying Ress `.git`, remotes, configuration, locks, keys, vault material, or
+ownership records. A portable profile can be investigated only on a disposable
+copy, then must satisfy the same focused inspection before automated import.

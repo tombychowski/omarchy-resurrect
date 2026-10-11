@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# mntg — capture an Omarchy machine, replay it onto a fresh one.
+# mntg — compose, share, apply, and manage portable Omarchy loadouts.
 #
 # This entrypoint and the modules it loads are the whole engine. The Quickshell
 # panel is a face on top of the CLI; every button there invokes one of these
@@ -34,14 +34,6 @@ MONTAGE_MODULES=(
   lib/montage/repository/sync.sh
   lib/montage/repository/commands.sh
   lib/montage/machine/packages.sh
-  lib/montage/vault/common.sh
-  lib/montage/vault/history.sh
-  lib/montage/vault/backup.sh
-  lib/montage/vault/restore-state.sh
-  lib/montage/vault/restore-preview.sh
-  lib/montage/vault/restore.sh
-  lib/montage/vault/verify.sh
-  lib/montage/vault/commands.sh
   lib/montage/loadout/registry.sh
   lib/montage/loadout/profile.sh
   lib/montage/loadout/repository.sh
@@ -50,13 +42,8 @@ MONTAGE_MODULES=(
   lib/montage/loadout/share.sh
   lib/montage/loadout/lifecycle.sh
   lib/montage/loadout/apply.sh
-  lib/montage/port/common.sh
-  lib/montage/port/adapter.sh
-  lib/montage/port/adapters/ress_v1/format.sh
-  lib/montage/port/adapters/ress_v1/translate.sh
-  lib/montage/port/inspect.sh
-  lib/montage/port/import.sh
-  lib/montage/port/export.sh
+  lib/montage/commands.sh
+  lib/montage/port/ress.sh
   lib/montage/port/commands.sh
 )
 for module in "${MONTAGE_MODULES[@]}"; do
@@ -79,24 +66,7 @@ trap montage_cleanup EXIT
 
 usage() {
   cat <<USAGE
-${c_bold}mntg${c_reset} $VERSION — capture an Omarchy machine, replay it onto a fresh one.
-
-  ${c_bold}mntg backup${c_reset} [-m MSG] [--push] [--secrets]
-      Capture this machine into the vault and commit it.
-  ${c_bold}mntg backup list${c_reset} [--json]
-      List validated backup commits without changing the vault checkout.
-  ${c_bold}mntg backup show${c_reset} COMMIT [--json]
-      Inspect one exact validated backup commit.
-  ${c_bold}mntg backup label${c_reset} LABEL COMMIT
-      Give one exact backup a validated stable selector.
-  ${c_bold}mntg backup retain${c_reset} --keep COUNT [--dry-run]
-      Preview and confirm a local history-retention rewrite.
-
-  ${c_bold}mntg restore${c_reset} [--from GIT_URL] [--backup COMMIT] [--only LIST] [--skip LIST] [--dry-run]
-      Replay a vault onto this machine. Resumable; rerun to continue.
-      Two things it will not do without being asked: build an AUR package
-      (--aur, --no-aur, --review-aur) and enable a systemd user service
-      (--enable-units, --no-enable-units). --yes does not answer either.
+${c_bold}mntg${c_reset} $VERSION — compose, share, apply, and manage portable Omarchy loadouts.
 
   ${c_bold}mntg share${c_reset} --repository NAME --loadout ID [--name NAME] [--description TEXT]
       Create or update one stable item in a Montage loadout repository.
@@ -112,56 +82,35 @@ ${c_bold}mntg${c_reset} $VERSION — capture an Omarchy machine, replay it onto 
   ${c_bold}mntg loadout${c_reset} <list|show|check|repair|update|remove> ...
       Inspect and manage the loadouts tracked on this machine.
   ${c_bold}mntg repository${c_reset} <init|list|show|validate|configure|remove|loadouts|loadout|sync> ...
-      Inspect and configure Montage loadout and vault repositories.
+      Inspect and configure Montage loadout libraries.
   ${c_bold}mntg repository sync${c_reset} NAME [--pull|--push] [--json]
       Fetch and classify; optionally fast-forward pull or ordinary push.
   ${c_bold}mntg resource${c_reset} <list|show> ...
       Inspect loadout resource provenance, health and claimants.
 
-  ${c_bold}mntg verify${c_reset} [--backup COMMIT] [--json]
-                            Check this machine against one exact backup, and
-                            exit non-zero if it does not match.
-  ${c_bold}mntg scan${c_reset} [--json]        Look through the vault for anything shaped
-                            like a credential.
-  ${c_bold}mntg enable-units${c_reset} [--all|--list] [UNIT...]
-                            Turn on the user services a backup recorded,
-                            after reading what each one runs.
-
-  ${c_bold}mntg status${c_reset} [--json]      What is captured, and when.
-  ${c_bold}mntg diff${c_reset} [--stock]       What changed since the last backup, or how
-                            far this machine is from a stock Omarchy install.
-  ${c_bold}mntg init${c_reset} [--remote URL]  Create the vault.
-  ${c_bold}mntg set${c_reset} KEY=VALUE        Change a setting.
-  ${c_bold}mntg secrets${c_reset} <init|list|add|enable|disable>
-  ${c_bold}mntg doctor${c_reset}               Check this machine is ready.
+  ${c_bold}mntg status${c_reset} [--json]      Summarize loadout and library attention.
+  ${c_bold}mntg set AUR=<ask|yes|no>${c_reset} Change Loadout AUR policy.
+  ${c_bold}mntg doctor${c_reset}               Check this machine is ready for Loadouts.
   ${c_bold}mntg link${c_reset} [--remove]      Add or remove Montage's owned PATH link.
 
   ${c_bold}mntg port ress inspect${c_reset} SOURCE [--json]
-      Inspect one supported Ress v1 artifact without changing it.
-  ${c_bold}mntg port ress plan${c_reset} SOURCE --destination PATH [--history] [--json]
-      Preview an isolated conversion and every selected revision or loss.
-  ${c_bold}mntg port ress import${c_reset} <loadout|vault> ...
-      Publish a confirmed staged conversion into separate Montage storage.
-  ${c_bold}mntg port ress export${c_reset} <loadout|backup> ...
-      Create a confirmed disposable Ress v1 compatibility copy.
+      Inspect one supported Ress v1 portable profile without changing it.
+  ${c_bold}mntg port ress import loadout${c_reset} SOURCE --repository NAME --loadout ID ...
+      Import one confirmed Ress v1 profile into a selected library item.
 
 Native loadout instructions use canonical credential-free repository URLs and
 an explicit stable loadout selector.
 
-Categories: ${CATEGORIES[*]}
 Config:     $CONFIG_FILE
-Settings:   AUR=${CFG[AUR]} ENABLE_UNITS=${CFG[ENABLE_UNITS]} SECRET_SCAN=${CFG[SECRET_SCAN]}
-            CAPTURE_AUTOSTART=${CFG[CAPTURE_AUTOSTART]}   (change with \`mntg set KEY=VALUE\`)
+Settings:   AUR=${CFG[AUR]}   (change with \`mntg set AUR=VALUE\`)
 USAGE
 }
 
 # ================================================================= DISPATCH
 
-VAULT_OVERRIDE=""
 ARGS=()
 while (( $# > 0 )); do
   case "$1" in
-    --vault) VAULT_OVERRIDE="${2:-}"; shift 2 ;;
     --porcelain) PORCELAIN=1; shift ;;
     --dry-run|-n) DRY_RUN=1; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
@@ -182,12 +131,6 @@ command="${1:-status}"
 shift || true
 
 case "$command" in
-  backup)
-    if [[ ${1:-} == list || ${1:-} == show || ${1:-} == label ||
-          ${1:-} == unlabel || ${1:-} == retain ]]; then cmd_backup_history "$@"
-    else cmd_backup "$@"; fi
-    ;;
-  restore) cmd_restore "$@" ;;
   share)   cmd_share "$@" ;;
   apply)   cmd_apply "$@" ;;
   loadout) cmd_loadout "$@" ;;
@@ -195,15 +138,9 @@ case "$command" in
   repository) cmd_repository "$@" ;;
   port)    cmd_port "$@" ;;
   status)  cmd_status "$@" ;;
-  diff)    cmd_diff "$@" ;;
-  init)    cmd_init "$@" ;;
   set)     cmd_set "$@" ;;
-  secrets) cmd_secrets "$@" ;;
   doctor)  cmd_doctor "$@" ;;
   link)    cmd_link "$@" ;;
-  enable-units) cmd_enable_units "$@" ;;
-  scan)    cmd_scan "$@" ;;
-  verify)  cmd_verify "$@" ;;
   ""|help) usage ;;
   *)       die "unknown command: $command (try --help)" ;;
 esac

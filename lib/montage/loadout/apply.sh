@@ -24,6 +24,7 @@ cmd_apply() {
     loadout_repository_fetch_profile "$source" "$loadout_selector" "$APPLY_WORK" ||
       die "repository or selected loadout is invalid or unavailable"
     source="$APPLY_REPOSITORY_SOURCE"
+    repository_migration_notice
   else
     source=$(normalize_source "$source") || die "Ress short links are not native Montage sources; use a canonical repository URL or port the artifact"
     fetch_profile "$source" "$APPLY_WORK"
@@ -130,13 +131,23 @@ cmd_apply() {
     aur_gate apply "${aur[@]}"
     if [[ $AUR_MODE != skip ]] && have yay && aur_install apply "${AUR_KEPT[@]}"; then
       for pkg in "${aur[@]}"; do
+        if printf '%s\n' "${AUR_DENIED[@]:-}" | grep -qxF -- "$pkg"; then
+          registry_set_claim_result "$id" "package:$pkg" deferred missing '{}' "AUR package denied by policy"
+          continue
+        fi
         observation=$(resource_inspect_json "$(jq -c --arg id "package:$pkg" '.resources[] | select(.id == $id)' <<<"$REGISTRY")" live)
         if [[ $(jq -r '.state' <<<"$observation") == present ]]; then
           registry_set_claim_result "$id" "package:$pkg" healthy present "$(jq -c '.evidence' <<<"$observation")"
         else registry_set_claim_result "$id" "package:$pkg" failed missing '{}' "AUR package was not installed"; fi
       done
     else
-      for pkg in "${aur[@]}"; do registry_set_claim_result "$id" "package:$pkg" deferred missing '{}' "AUR build left for later"; done
+      for pkg in "${aur[@]}"; do
+        if printf '%s\n' "${AUR_DENIED[@]:-}" | grep -qxF -- "$pkg"; then
+          registry_set_claim_result "$id" "package:$pkg" deferred missing '{}' "AUR package denied by policy"
+        else
+          registry_set_claim_result "$id" "package:$pkg" deferred missing '{}' "AUR build left for later"
+        fi
+      done
     fi
   fi
 

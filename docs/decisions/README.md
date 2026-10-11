@@ -13,7 +13,7 @@ A decision record is useful when a change:
 - accepts a meaningful trade-off whose rejected alternative is likely to return; or
 - deliberately constrains future implementation choices beyond one feature.
 
-Examples include choosing a vault migration strategy, changing the CLI/panel authority boundary, or adopting a new CI/runtime dependency model.
+Examples include changing configured-registry migration strategy, changing the CLI/panel authority boundary, or adopting a new CI/runtime dependency model.
 
 ## Do not write a record for
 

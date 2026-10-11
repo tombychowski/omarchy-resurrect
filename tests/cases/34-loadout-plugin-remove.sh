@@ -19,8 +19,24 @@ mntg loadout remove --yes "$ID" --keep-modified
 assert_ok "explicit keep releases cleanup authority"
 assert_dir "$HOME/.config/omarchy/plugins/acme.remove"
 
+# An unverifiable link is never treated as proof that Montage still owns the
+# bytes at its target.
+rm -rf "$HOME/.config/omarchy/plugins/acme.remove"; rm -f "$(registry_path)"
+apply_yes "$P"; ID=$(first_loadout_id)
+mv "$HOME/.config/omarchy/plugins/acme.remove" "$SANDBOX/external-plugin"
+ln -s "$SANDBOX/external-plugin" "$HOME/.config/omarchy/plugins/acme.remove"
+mntg loadout remove --yes "$ID"
+assert_exit 2 "unverifiable plugin requires a decision"
+assert_dir "$SANDBOX/external-plugin" "unverifiable plugin target is preserved"
+[[ -L $HOME/.config/omarchy/plugins/acme.remove ]] && _pass ||
+  _fail "unverifiable plugin link is preserved"
+mntg loadout remove --yes "$ID" --keep-modified
+assert_ok "explicit keep releases unverifiable cleanup authority"
+assert_dir "$SANDBOX/external-plugin" "keeping unverifiable plugin retains its target"
+
 # A clean pinned plugin is delegated to Omarchy for unload/rescan semantics.
-rm -rf "$HOME/.config/omarchy/plugins/acme.remove"; rm -f "$(registry_path)"; : >"$CALLS"
+rm -f "$HOME/.config/omarchy/plugins/acme.remove"; rm -rf "$SANDBOX/external-plugin"
+rm -f "$(registry_path)"; : >"$CALLS"
 apply_yes "$P"; ID=$(first_loadout_id); : >"$CALLS"
 mkdir -p "$HOME/.local/share/acme.remove-data"
 printf 'keep me\n' >"$HOME/.local/share/acme.remove-data/settings"

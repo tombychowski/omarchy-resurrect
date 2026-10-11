@@ -186,7 +186,7 @@ if (( ! resume_modified_decision )); then
   fi
   assert_empty_registry
   assert_fixture_absent
-  [[ $(current_theme) == "$baseline" ]] || fail "final removal did not restore theme baseline"
+  [[ $(current_theme) == "$baseline" ]] || fail "final removal did not return to theme baseline"
 
   phase "cycle 2: apply A then B; remove B then A with modified-plugin decision"
   apply_pair
@@ -220,7 +220,7 @@ assert_empty_registry
 remove_plugin_without_live_shell
 [[ ! -e $plugin_dir ]] || fail "manual cleanup did not remove the released plugin"
 assert_fixture_absent
-[[ $(current_theme) == "$baseline" ]] || fail "opposite-order final removal did not restore baseline"
+[[ $(current_theme) == "$baseline" ]] || fail "opposite-order final removal did not return to baseline"
 
 phase "cycle 3: preserve an external theme selection"
 "$mntg" apply --yes --no-aur "$profile_a"

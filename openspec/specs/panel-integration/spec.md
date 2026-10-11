@@ -2,52 +2,24 @@
 
 ## Purpose
 
-Defines how the native Omarchy panel presents ress state and delegates machine-changing behavior to the CLI or an interactive terminal.
+Defines how the native Omarchy panel presents Montage Loadout state and delegates machine-changing behavior to the CLI or an interactive terminal.
 
 ## Requirements
 
 ### Requirement: CLI Is Authoritative For Panel State
 
-The panel SHALL obtain repository, vault, backup history, freshness, category, synchronization, operation, applied-loadout, resource-health, lifecycle, and Ress-port state through documented `mntg` output rather than independently inspecting or modifying repository or machine state.
+The panel SHALL obtain loadout repository, synchronization, operation, applied-loadout, resource-health, lifecycle, Share-catalog, and Ress-migration state through documented `mntg` output rather than independently inspecting or modifying repository or machine state.
 
 #### Scenario: Panel refreshes summary
 
-- **WHEN** the panel needs current repository, backup, or applied-loadout state
-- **THEN** it consumes the applicable CLI status, repository, history, or loadout query result
-- **AND** does not derive a conflicting state from Git, repository, snapshot, or registry files
+- **WHEN** the panel needs current repository, applied-loadout, or attention state
+- **THEN** it consumes the applicable CLI status, repository, loadout, resource, or migration result
+- **AND** does not derive conflicting state from Git, repository, profile, registry, or machine files
 
 #### Scenario: Malformed status is not fabricated
 
 - **WHEN** a CLI result cannot be parsed
-- **THEN** the panel discards that result rather than presenting fabricated repository, ownership, synchronization, or health values
-
-### Requirement: Backup Runs Through The CLI
-
-The panel SHALL invoke backup for the selected Montage vault repository through `mntg` and SHALL render operation progress from the CLI consumer protocol.
-
-#### Scenario: User starts backup in panel
-
-- **WHEN** the user activates the backup action for a selected vault repository
-- **THEN** the panel launches the corresponding `mntg backup` operation
-- **AND** displays its reported steps and completion state
-
-### Requirement: Restore Uses An Interactive Terminal
-
-The panel SHALL open `mntg restore` for an explicitly selected backup in a terminal so source identity, privilege, and consent interactions remain visible and answerable.
-
-#### Scenario: User activates restore
-
-- **WHEN** the user selects a repository backup and activates restore from the panel
-- **THEN** Montage opens an interactive terminal restore flow pinned to that backup commit
-- **AND** the panel does not silently obtain elevated privileges
-
-### Requirement: Backup Freshness Is Legible
-The panel SHALL distinguish current, stale, missing, running, and failed backup states without presenting a stale backup as an operation failure.
-
-#### Scenario: Backup becomes stale
-- **WHEN** the last successful backup exceeds the configured freshness threshold
-- **THEN** the panel changes its freshness presentation
-- **AND** continues to distinguish that condition from a failed backup
+- **THEN** the panel discards that result rather than presenting fabricated repository, ownership, synchronization, health, or attention values
 
 ### Requirement: Core Panel Actions Are Keyboard Accessible
 The panel SHALL expose navigation, activation, tab switching, and closing through documented keyboard controls.
@@ -174,14 +146,17 @@ The panel SHALL derive candidates, selected-loadout membership, applied-loadout 
 - **AND** the CLI performs final machine inspection, profile generation, validation, and atomic repository update
 
 ### Requirement: External Operation State Tracks The Lock Owner
-The panel-visible running state SHALL remain present for the lifetime of the live CLI process that owns the primary operation lock and SHALL NOT be cleared by unrelated CLI processes.
+
+The panel-visible running state SHALL remain present for the lifetime of the live loadout or repository mutation that owns the primary operation lock and SHALL NOT be cleared by unrelated CLI processes.
 
 #### Scenario: Read command exits during a live operation
-- **WHEN** a backup, restore, or loadout mutation owns the operation lock and an unrelated status, query, help, or version command exits
+
+- **WHEN** a loadout mutation owns the operation lock and an unrelated status, query, help, or version command exits
 - **THEN** the panel continues to observe the external operation as running
 - **AND** only the lock-owning operation removes its marker when it finishes
 
 #### Scenario: Dry run owns no visible marker
+
 - **WHEN** a dry-run operation acquires the primary lock for a coherent plan
 - **THEN** it does not create or remove the panel-visible running marker
 
@@ -198,50 +173,79 @@ CLI configuration updates initiated by the panel or terminal SHALL complete only
 - **THEN** each successful writer rereads configuration while holding the lock
 - **AND** one successful update does not discard the other
 
-### Requirement: Panel Presents Montage Repositories Progressively
+### Requirement: Panel Presents Loadout Libraries Progressively
 
-The panel SHALL provide keyboard-accessible surfaces for selecting and inspecting configured loadout and vault repositories, their items or backup history, validity, synchronization state, and actions supplied by the CLI.
+The panel SHALL provide a keyboard-accessible Libraries surface for selecting and inspecting configured loadout repositories, stable loadout items, validity, synchronization state, and actions supplied by the CLI.
 
 #### Scenario: User inspects loadout repository
 
-- **WHEN** a configured loadout repository contains multiple loadouts
+- **WHEN** a configured repository contains multiple loadouts
 - **THEN** the panel lists their stable identities and display metadata from CLI output
-- **AND** requires an explicit loadout selection before apply or update
+- **AND** requires an explicit loadout selection before compose, apply, or update
 
-#### Scenario: User inspects vault history
+#### Scenario: Repository needs attention
 
-- **WHEN** a configured vault repository contains multiple backup commits
-- **THEN** the panel lists CLI-reported timestamps, labels, summaries, and immutable commit identities
-- **AND** permits preview of a selected backup without checking out or parsing Git itself
+- **WHEN** the CLI reports invalid, unavailable, remote-ahead, or divergent repository state
+- **THEN** the panel presents repository attention and the applicable inspect or terminal handoff
+- **AND** does not choose a history or repair action independently
 
 ### Requirement: Panel Configures Montage Locations Without Sharing Ress State
 
-The panel SHALL allow users to configure Montage loadout and vault repository locations and credential-free remotes. It SHALL NOT offer a shared-live-directory mode for Ress configuration, vaults, loadouts, locks, or state.
+The panel SHALL allow users to configure Montage loadout-library locations and credential-free remotes. It SHALL NOT offer vault repository types or a shared-live-directory mode for Ress configuration, loadouts, locks, or state.
 
 #### Scenario: Repository location is changed
 
-- **WHEN** the user submits a new Montage repository location
+- **WHEN** the user submits a new Montage library location
 - **THEN** the panel delegates validation and serialized configuration update to `mntg`
-- **AND** does not move, overwrite, or adopt an existing repository implicitly
+- **AND** does not ask for a repository kind or move, overwrite, or adopt a repository implicitly
 
 #### Scenario: Ress location is supplied for migration
 
-- **WHEN** the user chooses a Ress artifact as an import source
-- **THEN** the panel treats it as a one-time port source and presents the CLI conversion preview
+- **WHEN** the user chooses a Ress loadout profile as an import source
+- **THEN** the panel or CLI workflow treats it only as a one-time migration source
 - **AND** does not save it as Montage's live repository or state location
 
-### Requirement: Risky Repository And Port Actions Use An Interactive Terminal
+### Requirement: Risky Repository And Migration Actions Use An Interactive Terminal
 
-The panel SHALL delegate synchronization that requires conflict decisions, backup restore, retention deletion, and Ress import or export publication to an interactive terminal so previews and consent remain visible.
+The panel SHALL delegate synchronization requiring conflict decisions and Ress loadout publication to an interactive terminal so previews and consent remain visible.
 
 #### Scenario: Synchronization diverges
 
 - **WHEN** a repository sync preview reports divergent local and remote histories
-- **THEN** the panel opens the interactive `mntg` flow for the user to resolve or abort
-- **AND** does not force-push or reset a repository directly
+- **THEN** the panel opens the interactive `mntg` flow for review or abort
+- **AND** does not force-push, reset, or merge a repository directly
 
-#### Scenario: User confirms Ress import
+#### Scenario: User confirms Ress loadout import
 
-- **WHEN** a Ress import preview is ready for publication
-- **THEN** the panel opens the interactive `mntg` import flow
-- **AND** leaves the source and destination unchanged until CLI confirmation succeeds
+- **WHEN** a Ress loadout migration preview is ready for publication
+- **THEN** the panel opens the interactive `mntg` import flow when that action is exposed in the panel
+- **AND** leaves source and destination unchanged until CLI confirmation succeeds
+
+### Requirement: Panel Has Three Loadout-Oriented Surfaces
+
+The panel SHALL organize the product around Libraries, Compose/Share, and Applied Loadouts without a Backup surface.
+
+#### Scenario: User opens the panel
+
+- **WHEN** the panel becomes visible
+- **THEN** its available navigation exposes loadout libraries, composition, and applied-loadout management
+- **AND** exposes no backup, restore, retention, scheduling, or vault-history action
+
+### Requirement: Bar Presents Loadout Attention
+
+The bar SHALL summarize CLI-reported loadout attention and active operation state without using backup age, stale thresholds, schedules, or freshness language.
+
+#### Scenario: All loadout state is healthy
+
+- **WHEN** CLI status reports no applied-loadout or repository attention
+- **THEN** the bar presents a healthy loadout state
+
+#### Scenario: Repair is needed
+
+- **WHEN** CLI status reports repair-needed or drifted applied state
+- **THEN** the bar presents attention and the panel identifies the affected loadout
+
+#### Scenario: Status is unavailable
+
+- **WHEN** authoritative state is invalid or unavailable
+- **THEN** the bar distinguishes unavailable state from healthy, active, partial, or failed state

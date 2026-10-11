@@ -7,15 +7,18 @@ Defines a constrained setup-sharing format that can install named software and i
 ## Requirements
 
 ### Requirement: Loadout Contains Only Supported Setup Actions
-The system SHALL limit a loadout to packages, pinned plugins, reconstructible web apps, and a theme selection.
+
+The system SHALL limit a loadout to packages, pinned plugins, reconstructible web apps, and a theme selection discovered from current machine state.
 
 #### Scenario: Share excludes home content
-- **WHEN** a user exports a loadout from a vault
-- **THEN** the loadout contains no dotfiles, secret bundle, arbitrary file content, or command field
+
+- **WHEN** a user composes a loadout from the resource catalog
+- **THEN** the loadout contains no dotfiles, secret bundle, arbitrary file content, machine identity, cleanup authority, or command field
 
 #### Scenario: Unrepresentable launcher is omitted
-- **WHEN** a captured web app requires launcher behavior the loadout format cannot represent
-- **THEN** share omits it and reports the omission
+
+- **WHEN** a detected web app requires launcher behavior the loadout format cannot represent
+- **THEN** share marks it unavailable and reports the omission
 
 ### Requirement: Apply Is Previewed And Confirmed
 
@@ -129,15 +132,29 @@ The system SHALL compare a selective update with the valid selected repository l
 - **WHEN** an acknowledgement names a resource that is no longer the same unavailable selected-loadout entry
 - **THEN** share rejects the stale acknowledgement and preserves the selected loadout
 
-### Requirement: Whole-Machine Share Remains Compatible
+### Requirement: Authored Share Targets A Library Item
 
-The system SHALL retain unfiltered capture into a selected loadout, the portable schema version, Git history behavior, and configured credential-free share URL semantics when no explicit resource selection is supplied. It SHALL NOT depend on a one-profile repository layout.
+The system SHALL require an explicitly selected loadout repository and stable loadout id when composing or publishing authored loadout content.
 
-#### Scenario: Existing CLI invocation is used
+#### Scenario: All representable resources are shared
 
-- **WHEN** the user runs `mntg share` for an explicitly selected loadout without an explicit resource selection
-- **THEN** Montage writes all currently representable resources to that loadout item
-- **AND** existing name, description, and output-selection capabilities remain available through Montage syntax
+- **WHEN** a user runs `mntg share --repository NAME --loadout ID` without an explicit subset
+- **THEN** Montage publishes all currently representable resources to that one selected item
+- **AND** preserves every sibling item
+
+#### Scenario: Library selection is missing
+
+- **WHEN** a share invocation omits the repository or stable loadout id
+- **THEN** Montage refuses to create a legacy single-profile output repository
+
+### Requirement: Standalone Profiles Remain Applicable
+
+The system SHALL continue to validate and preview a contained standalone schema-version-1 `profile.json` without requiring a Montage repository envelope.
+
+#### Scenario: User applies a standalone profile
+
+- **WHEN** a user supplies a valid local or supported remote portable profile
+- **THEN** Montage previews and applies its constrained resources without treating it as authored library or cleanup state
 
 ### Requirement: Public Loadout URLs Carry No Credentials
 

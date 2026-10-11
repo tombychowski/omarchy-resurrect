@@ -2,36 +2,25 @@
 
 mntg --help
 assert_ok "Montage help is reachable"
-for route in 'mntg backup' 'mntg restore' 'mntg share' 'mntg apply' \
-  'mntg loadout' 'mntg repository' 'mntg repository sync' 'mntg verify' \
-  'mntg port ress inspect'; do
+for route in 'mntg share' 'mntg apply' 'mntg loadout' 'mntg resource' \
+  'mntg repository' 'mntg repository sync' 'mntg status' 'mntg set AUR=' \
+  'mntg doctor' 'mntg link' 'mntg port ress inspect' \
+  'mntg port ress import loadout'; do
   assert_output "$route" "help documents $route"
+done
+for removed in 'mntg backup' 'mntg restore' 'mntg verify' 'mntg scan' \
+  'mntg enable-units' 'mntg diff' 'mntg init' 'mntg secrets'; do
+  assert_not_output "$removed" "help omits removed route $removed"
 done
 
 mntg status --json
 assert_ok "status route"
 assert_equals "$(jq -r 'type' <<<"$OUT")" "object" "status emits JSON"
 
-seed_machine
-mntg init >/dev/null
-mntg backup -m routing >/dev/null
-assert_ok "backup route"
-backup_commit=$(git -C "$HOME/.local/share/montage/vault" rev-parse HEAD)
-mntg backup list --json
-assert_ok "backup history route"
-assert_equals "$(jq -r '.backups[0].commit' <<<"$OUT")" "$backup_commit" \
-  "history route identifies exact commit"
-mntg backup show "$backup_commit" --json
-assert_ok "backup show route"
-mntg --dry-run restore --backup "$backup_commit"
-assert_ok "restore preview route"
-mntg verify --backup "$backup_commit" --json
-assert_ok "verify route"
-
 library="$SANDBOX/routing-library"
-mntg repository init loadouts "$library" --id routing-library --json
+mntg repository init "$library" --id routing-library --json
 assert_ok "repository initialization route"
-mntg repository configure routing "$library" loadouts --json
+mntg repository configure routing "$library" --json
 assert_ok "repository configuration route"
 mntg repository list --json
 assert_ok "repository list route"
@@ -57,6 +46,12 @@ for invalid in 'repository unknown' 'loadout unknown' 'resource unknown' \
   mntg "${words[@]}"
   assert_fails "invalid route is refused: $invalid"
   assert_output "mntg:" "invalid route uses Montage error identity"
+done
+
+for removed in backup restore verify scan enable-units diff init secrets; do
+  mntg "$removed"
+  assert_fails "removed route is unknown: $removed"
+  assert_output "unknown command: $removed" "removed route has no compatibility dispatch: $removed"
 done
 
 assert_no_file "$REPO_DIR/bin/ress" "Montage ships no ress command alias"

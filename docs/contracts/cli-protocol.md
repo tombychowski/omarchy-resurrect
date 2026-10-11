@@ -1,348 +1,192 @@
 # CLI consumer protocol
 
-The CLI exposes two machine-readable surfaces:
+Commands advertising `--json` emit exactly one schema-versioned JSON object.
+`--porcelain` emits only newline-delimited records. Human output is not a
+protocol. Exit status remains meaningful even when a safe refusal object is
+available.
 
-- `--porcelain` streams operation records for long-running commands and the panel.
-- `--json` returns one JSON document for commands that advertise JSON output.
+All current JSON objects use integer `schemaVersion: 1` and a `kind` beginning
+`montage-`. Consumers ignore fields they do not use but reject wrong types,
+unknown schema versions, and malformed required relations. They never parse
+human prose to authorize an action.
 
-Consumers must select one of these surfaces instead of parsing human output. The `cli-consumer-protocol` OpenSpec capability owns the observable guarantees.
+Any command that first migrates configured libraries reports the migration in
+its normal result. JSON Share catalogs, repository item/catalog results, and
+Ress import reports carry `migration`; ordinary apply, update, and Share output
+prints the notice or emits `MIGRATION` in porcelain mode. No notice is inserted
+outside the JSON document. Subsequent reads report a no-op where applicable.
 
-All current Montage JSON envelopes carry integer `schemaVersion: 1` and a
-`kind` beginning `montage-`. Repository and history results bind mutable local
-selectors to stable identities:
+`loadout check --json` exits 0 for healthy state and 1 for a valid unhealthy
+result. Consumers retain validated unhealthy details; other failures and
+malformed output remain unavailable. Doctor accepts existing writable regular
+configuration files and writable nonsymlink state directories.
 
-- `montage-repository-list`, `montage-repository-show`, and
-  `montage-repository-validation` carry configured name, native repository id,
-  repository kind, canonical path, sanitized remote, validity, and status;
-- `montage-loadout-catalog` carries `repositoryId`, the current exact
-  `repositoryCommit`, and items with stable `id`, digest, repository identity,
-  commit identity, and relative portable-leaf path;
-- `montage-backup-list` and `montage-backup-show` carry `repositoryId`, with
-  each backup identified by full `commit` plus optional validated labels;
-- `montage-repository-sync` carries repository id and kind, exact local and
-  fetched commits, relationship, ahead/behind counts, fetch status, and action;
-- `montage-port-report` carries a stable adapter `format`, operation, foreign
-  artifact type and version, source and separate destination, selected revisions, warnings,
-  itemized losses, mutations, compatibility, publication state, and any
-  generated repository, loadout, or commit identities.
+## Porcelain
 
-Applied-loadout, resource, status, verification, and share-catalog results use
-the same version/kind convention. A nonzero result that advertises JSON still
-emits exactly one complete report when a safe structured refusal is available.
-
-## General rules
-
-- Machine-readable data is written to standard output.
-- In porcelain mode, stdout contains protocol records only—no colors, headings, or explanatory prose.
-- A JSON command writes one parseable JSON value to stdout, not a sequence of fragments.
-- Exit status remains meaningful. Parseable output does not imply success; for example, verification and scanning return structured findings and exit non-zero when findings exist.
-- Human mode is not stable protocol. Its wording and layout can improve without a compatibility event.
-- Consumers must tolerate fields they do not use and must not infer new actions from unknown data.
-
-## Porcelain records
-
-Porcelain is line-oriented. Each record starts with an uppercase record type followed by pipe-separated fields.
+Shared records are:
 
 ```text
-BEGIN|<action>|<target>
-STEP|<category>|<state>|<message>
-PROGRESS|<category>|<done>|<total>
+BEGIN|<action>|...
+STEP|<category>|<start|ok|skip|warn|fail>|<message>
 LOG|<message>
-DONE|<state>|<message>
+DONE|<ok|partial|fail>|<message>
 ```
 
-Repository synchronization adds `SYNC|1|<relationship>|<ahead>|<behind>|<fetch-ok>|<performed>|<action-ok>|<reason>` after a repository-identified `BEGIN` record. Port previews add `PORT|1|<format>|<operation>|<artifact-type>|<compatible>|<published>|<reason>`, followed by zero or more `PORT_REVISION` and `PORT_LOSS` records and an optional `PORT_IDENTITY`. These records contain validated format ids, resource ids, commit hashes, booleans, counts, and bounded reason codes; paths and free-form artifact content are not placed in fixed protocol fields.
+Messages may contain `|`; parsers preserve everything after the fixed fields.
+An early validation failure may exit before `BEGIN` or `DONE`, so consumers also
+capture stderr and exit status.
 
-### `mntg port FORMAT ... --json`
+Status emits:
 
-Every supported adapter uses one extensible envelope:
+```text
+BEGIN|status|1
+MIGRATION|1|<performed>|<prior-schema>|<new-schema>|<retired-names>|<rollback-copy>
+STATUS|1|<attention>|<applied-count>|<library-count>
+DONE|ok|status complete
+```
+
+The migration record is also present as `migration` in JSON results. Its
+`retiredVaults` and `backup` field names describe the one-time legacy
+configured-registry migration; they are not active repository kinds.
+
+Repository sync emits
+`SYNC|1|<relationship>|<ahead>|<behind>|<fetch-ok>|<performed>|<action-ok>|<reason>`.
+Ress migration emits `RESS|1|<operation>|<compatible>|<ready>|<published>|<reason>`
+plus zero or more `RESS_LOSS|<code>|<decision>|<waivable>` records.
+
+## Status JSON
+
+`mntg status --json` returns one `montage-status` object:
 
 ```json
 {
   "schemaVersion": 1,
-  "kind": "montage-port-report",
-  "format": "ress-v1",
-  "operation": "plan",
-  "artifactType": "vault",
-  "artifactVersion": 1,
-  "supportedArtifactVersion": 1,
-  "source": "/absolute/source",
-  "destination": "/absolute/separate-destination",
-  "selectedRevisions": [],
-  "warnings": [],
-  "losses": [],
-  "mutations": [],
-  "compatible": true,
-  "reason": null,
-  "published": false
-}
-```
-
-`format` is a bounded lowercase identifier. Adapter-specific fields may be
-added, and `artifactType` is also a bounded lowercase identifier rather than a
-closed Ress-specific enumeration. Consumers validate the common decision
-fields and tolerate fields they do not use. A safe structured refusal uses the same envelope with
-`compatible: false`, a bounded `reason`, and a nonzero exit status.
-
-### `BEGIN`
-
-Marks the start of an operation after prerequisite validation and preparation.
-
-- `action` is the command action such as `backup`, `restore`, or `share`.
-- `target` is the relevant vault or output path.
-
-Consumers should clear prior operation state when launching a command rather than require `BEGIN` to be the first possible process output; an early validation failure can terminate before normal operation setup.
-
-### `STEP`
-
-Reports a category or named operation step.
-
-Defined states are:
-
-- `start` — the step began;
-- `ok` — the step completed successfully;
-- `skip` — the step was not selected, was already complete, or was deliberately deferred;
-- `warn` — the step completed or continued with an important qualification; and
-- `fail` — the step failed.
-
-The message is displayable context, not another protocol to parse. Because paths or commands can contain `|`, consumers should split the first three separators and preserve the remainder as the message. `Model.parseRecord` follows this rule.
-
-### `PROGRESS`
-
-Reports numeric progress within a category. `done` and `total` are numbers. When total is not useful, a consumer may present indeterminate progress from surrounding `STEP` state rather than invent a percentage.
-
-### `LOG`
-
-Carries a human-readable operation note inside the protocol. Consumers may show it in an activity log. Messages can include preview facts and deferred-work summaries.
-
-### `DONE`
-
-Terminates the protocol operation when the command reaches its normal terminal reporting path.
-
-Current states include:
-
-- `ok` — no recorded category failure;
-- `partial` — restore completed its loop with one or more failed steps; and
-- `fail` — the operation was stopped by a terminal failure such as a blocking secret scan.
-
-Consumers must also handle process exit without a `DONE` record, because argument, dependency, or early validation errors can terminate before the operation protocol begins. In that case, stderr and exit status provide the failure context.
-
-## JSON commands
-
-### `mntg status --json`
-
-Status always attempts to return the current configured view, using safe fallback values for malformed hand-edited state.
-
-```json
-{
-  "hasVault": true,
-  "vault": "/home/user/.local/share/montage/vault",
-  "remote": "https://github.com/user/private-vault",
-  "lastBackup": 1791043200,
-  "commits": 3,
-  "unpushed": 0,
-  "autoBackup": false,
-  "intervalHours": 24,
-  "categories": {
-    "packages": true,
-    "config": true,
-    "omarchy": true,
-    "webapps": true,
-    "plugins": true,
-    "secrets": false
+  "kind": "montage-status",
+  "attention": "repair-needed",
+  "causes": ["repair-needed", "update-available"],
+  "operation": {"active": false, "valid": true, "ownerPid": null},
+  "loadouts": {
+    "available": true,
+    "evidenceValid": true,
+    "count": 1,
+    "attention": 1,
+    "repairNeeded": 1,
+    "drifted": 0,
+    "partialOrFailed": 0,
+    "updateAvailable": 1,
+    "items": []
   },
-  "settings": {
-    "aur": "ask",
-    "enableUnits": "ask",
-    "secretScan": "warn",
-    "captureAutostart": false
+  "repositories": {
+    "available": true,
+    "count": 1,
+    "attention": 0,
+    "items": [],
+    "migration": null
   },
-  "manifest": null
+  "settings": {"aur": "ask"},
+  "migration": null
 }
 ```
 
-`manifest` is the parsed vault manifest when readable, otherwise `null`. Malformed boolean-like values fall back safely, malformed timestamps and counts become safe numbers, and a malformed manifest does not erase the surrounding status object. `hasVault` reflects recognition of a supported manifest path, not successful parsing of every manifest field.
+The stable `attention` vocabulary, in descending precedence, is:
 
-### `mntg verify --json`
+1. `operation-active`;
+2. `operation-partial-or-failed`;
+3. `unavailable-or-invalid`;
+4. `repository-attention`;
+5. `drifted`;
+6. `repair-needed`;
+7. `update-available`;
+8. `healthy`.
 
-Verification compares reconstructible vault entries with the current machine:
+`causes` preserves all simultaneous details. Missing registries are valid empty
+state. A present malformed applied, configured-library, operation, or advisory
+evidence file is unavailable rather than empty. `update-available` requires
+evidence recorded by an explicit update preview for the same local loadout,
+repository, item, and baseline commit. Ordinary status performs no fetch,
+synchronization, repair, apply, update, or state write. Cached sync refs may
+establish remote-ahead or divergent library attention.
+
+## Libraries
+
+Repository list/show/validation objects carry configured name, canonical path,
+fixed `type:"loadouts"`, stable repository id, credential-free remote,
+validity, status, and migration facts. `montage-loadout-catalog` binds every
+stable item id and digest to one repository id and current exact commit.
+
+`montage-repository-sync` contains repository id, `repositoryType:"loadouts"`,
+exact local and fetched commits, relationship, ahead/behind counts, fetch
+status, and any requested action. Relationships are `equal`, `local-ahead`,
+`remote-ahead`, or `divergent`; bounded failure statuses describe invalid or
+unavailable evidence. Pull is fast-forward-only, push is non-forced, and
+divergence returns decision-required.
+
+## Applied loadouts and resources
+
+`mntg loadout list --json` emits `montage-applied-loadout-list`. Items include
+stable local id, display metadata, credential-free source, exact optional
+library/item/commit provenance, normalized digest, lifecycle state,
+`resourceCount`, and `attentionCount`. `--contents` adds the stored normalized
+profile.
+
+`mntg loadout check [ID] --json` emits `montage-loadout-check` with live
+resource rows. Each row retains recorded claim state and direct `currentState`,
+plus consumer-facing `healthState`. Check does not mutate or implicitly repair.
+
+Resource list/show results retain definition, first observation, cleanup policy,
+recorded evidence, live health, and claimant identities. These records explain
+authority; they do not grant new authority.
+
+Lifecycle mutations use shared porcelain records. Healthy completion ends in
+`DONE|ok`; deferred, failed, conflicting, or uncertain work ends in
+`DONE|partial` and a nonzero exit.
+
+## Share catalog
+
+`mntg share catalog --repository NAME --loadout ID --json` emits
+`montage-share-catalog` with:
+
+- stable candidate ids and kinds (`package`, `plugin`, `webapp`, `theme`);
+- `shareable`, bounded refusal code/reason, package channels, and active theme;
+- `currentItem`, containing the selected ids and fingerprinted unavailable
+  definitions for the selected library item;
+- applied-loadout starting presets with warning rows;
+- counts and the single-theme limit.
+
+The catalog omits commands, arbitrary file content, URL credentials, cleanup
+policy, claims, and private authority. Selective Share accepts only catalog ids,
+reinspects immediately before publication, and requires the matching
+fingerprint to withdraw an unavailable prior definition.
+
+An unavailable row uses a full lowercase SHA-256 definition fingerprint, for
+example:
 
 ```json
 {
-  "vault": "/path/to/vault",
-  "complete": false,
-  "takenAt": "2026-10-03T12:00:00Z",
-  "takenFrom": "source-host",
-  "categories": {
-    "packages": {
-      "want": 2,
-      "have": 1,
-      "missing": ["example-bin"],
-      "refused": []
-    }
-  }
+  "id": "plugin:old",
+  "state": "missing",
+  "fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
 
-Current category keys are `packages`, `config`, `themes`, `webapps`, `plugins`, and `services`. Every category value contains numeric `want` and `have` counts plus `missing` and `refused` arrays.
+## Ress v1 migration
 
-`refused` contains inventory that restore cannot safely reconstruct; it is distinct from `missing`. Array encoding preserves one logical entry even when its display name contains spaces.
+`mntg port ress inspect` and `mntg port ress import loadout` use one
+`montage-ress-loadout-migration` object. It contains literal format `ress-v1`,
+supported/source schema versions, contained source identity, optional selected
+destination, compatibility, readiness, bounded warnings/losses, separate Ress
+and Montage self-plugin decisions, and planned/published commit state.
 
-Exit status is zero when `complete` is true and non-zero when restorable entries are missing or differ. Refused inventory is reported but is not counted as missing restorable work.
+An unsupported or hostile source returns the same object with
+`compatible:false` when safe structured reporting is possible. Required but
+unanswered self-plugin choices use `ready:false`. There is no general format
+registry or reverse-conversion envelope.
 
-### `mntg scan --json`
+## Compatibility
 
-Credential scanning returns:
+Within schema 1, documented record names, field types, and field order remain
+stable. New optional JSON fields or ignorable records may be added. Required
+meaning or type changes require an OpenSpec and consumer-test update.
 
-```json
-{
-  "findings": [
-    {"file": "home/.config/example", "rule": "github-token"}
-  ],
-  "count": 1
-}
-```
-
-The matched secret is never present. The scan covers all captured plaintext
-below the vault root while excluding `.git` and
-`secrets/secrets.tar.age`. Exit status is zero for no findings and non-zero
-when one or more findings exist.
-
-### Applied-loadout JSON
-
-`mntg loadout list --json` emits one object with a `loadouts` array. Each item includes stable local `id`, display metadata, sanitized `source`, digest, timestamps, precedence, lifecycle `state`, `resourceCount`, and `attentionCount`. The stored normalized profile is omitted unless `--contents` is present.
-
-`mntg loadout show ID --json` emits `{loadout, claims, resources}` for one local identity. `--contents` includes `loadout.profile`; otherwise executable-shaped remote references remain hidden from the ordinary inventory.
-
-`mntg resource list --json` emits `{resources:[...]}` and accepts `--state STATE`. `mntg resource show RESOURCE-ID --json` emits one resource with `firstObserved`, `cleanupPolicy`, recorded state/evidence, and `claimants`, the local loadout ids related through claims.
-
-`mntg loadout check [ID] --json` performs live inspection and emits:
-
-```json
-{
-  "healthy": false,
-  "loadouts": [{
-    "id": "work-a1b2c3d4e5f6",
-    "attentionCount": 1,
-    "resources": [{
-      "id": "package:example",
-      "claimStatus": "healthy",
-      "healthState": "missing",
-      "currentState": "missing",
-      "currentEvidence": {}
-    }]
-  }]
-}
-```
-
-`healthState` is the consumer-facing classification. It reports protected resources explicitly and folds deferred or removal-pending claims into `pending`; `currentState` remains the direct machine observation. Its exit status is non-zero when any selected resource is not currently satisfied. Inspection does not repair or update the registry.
-
-`mntg status --json` additionally contains `loadouts:{available,count,attention}`. A missing registry is an available empty inventory. A malformed or unsupported registry produces `available:false` and null counts without erasing valid backup status.
-
-Loadout mutations use the same porcelain record grammar as restore. A fully healthy apply ends with `DONE|ok|...`; deferred, failed, conflicting, or uncertain work ends with `DONE|partial|...` and a non-zero status. Consumers must not reinterpret warning prose as success.
-
-### `mntg share catalog --repository NAME --loadout ID --json`
-
-The share catalog is the complete local discovery boundary for a loadout
-composer. It returns exactly one schema-versioned object. `--out` selects which
-current exported profile is compared; it does not change any files.
-
-```json
-{
-  "schemaVersion": 1,
-  "kind": "montage-share-catalog",
-  "repositoryId": "personal-library",
-  "loadoutId": "small-setup",
-  "repositoryCommit": "0123456789abcdef0123456789abcdef01234567",
-  "resources": [{
-    "id": "package:fd",
-    "kind": "package",
-    "name": "fd",
-    "shareable": true,
-    "reasonCode": "",
-    "reason": "",
-    "channels": ["native"],
-    "active": false
-  }],
-  "currentExport": {
-    "state": "valid",
-    "name": "Small setup",
-    "description": "Tools I use",
-    "resourceIds": ["package:fd"],
-    "unavailable": [{
-      "id": "plugin:old",
-      "kind": "plugin",
-      "name": "old",
-      "reasonCode": "missing",
-      "reason": "resource is not present on this machine",
-      "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    }]
-  },
-  "presets": {
-    "state": "valid",
-    "loadouts": [{
-      "id": "work-a1b2c3",
-      "name": "Work",
-      "resourceIds": ["package:fd"],
-      "warnings": [{"id": "plugin:old", "state": "missing"}]
-    }]
-  },
-  "counts": {"package": 1},
-  "limits": {"themes": 1}
-}
-```
-
-Resource kinds are `package`, `plugin`, `webapp`, and `theme`. Stable
-shareable identities are `package:<name>`, `plugin:<id>`, `webapp:<name>`, and
-`theme-install:<name>`. An item without a safe logical identity receives an
-opaque `unavailable:<kind>:<digest>` identity only so the panel can explain it;
-that identity can never be selected. Package `channels` contains `native`,
-`aur`, or both. `active` is meaningful for theme presentation.
-
-Candidate refusal codes are bounded to `missing-manifest`, `unsafe-id`,
-`missing-remote`, `unsafe-remote`, `unpinned`, `unsupported-launcher`,
-`credential-url`, `unsafe-name`, `unsafe-icon`, `local-only`, and `missing-theme`. A valid current
-export can additionally report `missing` or `definition-mismatch`. An invalid
-current profile uses state `unavailable` with `invalid-profile`; no profile uses
-state `absent`. Applied presets independently use `valid` or `unavailable`,
-with `invalid-registry` for malformed local state. Preset warning states are
-live resource or claim classifications and are display information, not
-deletion authority.
-
-Unavailable current-export fingerprints bind the stable identity to the
-canonical prior profile definition. They are staleness tokens used by selective
-export, not secrets or general authorization.
-
-Selective porcelain export emits `BEGIN|share|<output>` and the normal Share
-step records. Success ends with `DONE|ok|<output>`. A selected identity that is
-missing or no longer shareable, an acknowledgement-required withdrawal, a stale
-fingerprint, invalid metadata, or a cardinality violation ends non-zero with
-`DONE|fail|<reason>`; the reason names the affected logical identity when one is
-known. Explanatory prose remains on stderr, never mixed into stdout.
-
-The catalog intentionally omits resource definitions, commands, file content,
-URL credentials, registry cleanup policy, ownership evidence, and claims. It
-does not perform network discovery. Optional current-export and preset failures
-do not erase an otherwise valid machine inventory.
-
-## stderr and failures
-
-Consumers should collect stderr separately. Porcelain/JSON stdout must remain parseable, but an early `die` path can explain invalid usage, missing dependencies, unsafe input, or an unavailable vault through stderr and non-zero exit.
-
-The panel turns worker stderr or a non-zero exit without a message into an operation error. Status JSON parse failure results in no accepted status object; the panel must not derive substitute vault facts on its own.
-
-## Compatibility expectations
-
-Within a supported schema generation:
-
-- record type names and field ordering are stable;
-- JSON keys documented above retain their meaning and value type;
-- new optional JSON fields or new display-only protocol messages may be added;
-- consumers ignore unknown records or fields they do not understand;
-- consumers do not parse message prose to make safety decisions; and
-- behavior changes to required records, field meaning, or types require an OpenSpec and contract update with consumer tests.
-
-Protocol tests live in `tests/cases/12-porcelain.sh`, `28-tracked-apply.sh`, and
-`40-share-compose.sh`; JSON behavior in `tests/cases/08-verify.sh`,
-`19-status-config.sh`, `27-loadout-query.sh`, `29-loadout-check.sh`, and
-`40-share-compose.sh`; parser behavior lives in `tests/model-test.js`.
+Evidence lives in `68-loadout-protocol.sh`, `70-status-attention.sh`, repository,
+Share, lifecycle, and Ress cases, plus `tests/model-test.js`.

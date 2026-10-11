@@ -2,52 +2,50 @@
 
 ## Purpose
 
-Defines how ress reads control files from fetched vaults and loadouts without allowing untrusted repository links to escape the selected artifact root.
+Defines how Montage reads control files from fetched Loadout libraries and profiles without allowing untrusted repository links to escape the selected artifact root.
 
 ## Requirements
 
-### Requirement: Control Files Are Contained Regular Files
+### Requirement: Loadout Control Files Are Contained Regular Files
 
-The system SHALL read a repository envelope, backup manifest, portable profile, Ress port control, inventory, list, launcher, or encrypted bundle only when the selected path is a regular non-symlink file contained beneath the validated repository, historical worktree, or staging root expected for that artifact.
+The system SHALL read a native loadout repository envelope, portable profile, configured registry document, applied registry document, or Ress loadout migration control only when the selected path is a regular non-symlink file contained beneath the validated repository, isolated fetched tree, migration source, or staging root expected for that artifact.
 
 #### Scenario: Fetched profile is a symlink
 
-- **WHEN** a cloned loadout repository provides a selected `profile.json` as a symbolic link
+- **WHEN** a cloned loadout repository provides the selected `profile.json` as a symbolic link
 - **THEN** Montage refuses the profile before reading the link target
 - **AND** performs no loadout mutation
 
-#### Scenario: Vault manifest is a symlink
+#### Scenario: Repository envelope is a symlink
 
-- **WHEN** a fetched vault provides `montage.json` or `backup.json` as a symbolic link
-- **THEN** Montage refuses the repository or backup as malformed before preview or mutation
+- **WHEN** a native library provides `montage.json` as a symbolic link
+- **THEN** Montage refuses the repository before reading the link target
 
-#### Scenario: Ress port control is a symlink
+#### Scenario: Ress migration profile is a symlink
 
-- **WHEN** an explicit Ress import source provides its manifest or profile as a symbolic link
-- **THEN** the port adapter refuses the artifact rather than following the link
-- **AND** leaves source and destination unchanged
+- **WHEN** a Ress loadout migration source provides its profile through a symbolic link
+- **THEN** Montage refuses the source and leaves source and destination unchanged
 
-#### Scenario: Inventory is a symlink
+#### Scenario: Registry is a symlink
 
-- **WHEN** a backup inventory or explicit encrypted bundle path is a symbolic link
-- **THEN** Montage refuses that input rather than reading the link target as backup content
+- **WHEN** a configured or applied registry path is not the expected contained regular file
+- **THEN** Montage refuses mutation rather than adopting the linked content as repository or cleanup authority
 
-### Requirement: Directory Replay Does Not Escape The Artifact Root
+### Requirement: Loadout Directory Reading Does Not Escape The Artifact Root
 
-The system SHALL preserve safe contained directory content without following links that resolve outside the validated repository snapshot, historical worktree, or import staging subtree.
+The system SHALL inspect repository, fetched-source, and migration trees without following links that escape the validated root or using escaped content to select a mutation target.
 
-#### Scenario: Captured tree contains an escaping link
+#### Scenario: Repository item escapes its library
 
-- **WHEN** a selected backup tree contains a symbolic link whose target is outside that tree
-- **THEN** restore does not read or write through the escaping link
-- **AND** does not use the link to select a machine mutation target
+- **WHEN** a loadout item path or parent directory contains a link escaping the native repository
+- **THEN** Montage refuses the item before share, apply, query, or update
 
-#### Scenario: Historical checkout contains an escaping link
+#### Scenario: Fetched repository contains an escaping link
 
-- **WHEN** a historical backup commit is materialized for inspection or restore and contains a link escaping its isolated worktree
-- **THEN** Montage refuses that linked content under the same rules as the current backup
+- **WHEN** an exact fetched commit contains a link escaping its isolated tree
+- **THEN** Montage refuses the linked content before loadout planning or mutation
 
-#### Scenario: Ress staging tree contains an escaping link
+#### Scenario: Ress source contains an escaping link
 
-- **WHEN** an import source contains a directory link that escapes the staged artifact boundary
-- **THEN** the port adapter refuses the linked content and does not publish the staged repository
+- **WHEN** a Ress loadout migration source contains a directory link that escapes its artifact boundary
+- **THEN** Montage refuses migration and does not publish the staged item

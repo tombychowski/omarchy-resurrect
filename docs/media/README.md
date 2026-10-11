@@ -11,8 +11,8 @@ README, current site, marketplace submission, or current workflows.
 
 Required clean-machine captures before marketplace submission:
 
-- `montage-panel-1.0.0.png` — all four tabs and Montage title;
-- `montage-repositories-1.0.0.png` — repository, loadout, and backup selection;
+- `montage-panel-1.0.0.png` — all three Loadout surfaces and Montage title;
+- `montage-repositories-1.0.0.png` — library and stable-loadout selection;
 - `montage-share-1.0.0.png` — selected-loadout composition; and
 - `montage-open-graph-1.0.0.jpg` — 1200×630 release artwork.
 

@@ -12,14 +12,15 @@ replace, rename, or claim the published `resurrect` listing.
 | Initial independent version | `1.0.0` |
 | Repository | `https://github.com/tombychowski/omarchy-montage` |
 | Homepage | `https://github.com/tombychowski/omarchy-montage` |
-| Kinds | `bar-widget`, `service` |
+| Kinds | `bar-widget` |
 | CLI | `mntg` |
 | Category | System |
 | License | MIT |
 
-`manifest.json` is the machine-readable source for identity, entry points, bar
-defaults, aliases, description, homepage, and version. The marketplace must
-index this repository URL and plugin id as a new entry.
+`manifest.json` is the machine-readable source for identity, the bar-widget
+entry point, aliases, description, homepage, and version. The marketplace must
+index this repository URL and plugin id as a new entry. Montage installs no
+background service or timer.
 
 ## Install, update, remove
 
@@ -48,8 +49,9 @@ predecessor releases:
 - `montage-share-1.0.0.png`
 - `montage-open-graph-1.0.0.jpg`
 
-Screenshots must show current Montage branding and the `tombychowski.montage`
-plugin. Do not reuse an asset whose visible content or metadata identifies Ress.
+Screenshots must show current Montage branding, the `tombychowski.montage`
+plugin, and the Libraries, Compose/Share, and Applied Loadouts surfaces. Do not
+reuse an asset whose visible content or metadata identifies Ress.
 
 ## Submission checks
 

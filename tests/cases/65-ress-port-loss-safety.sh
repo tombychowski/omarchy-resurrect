@@ -1,77 +1,88 @@
-# Loss acceptance is itemized. It never stands in for containment, credential,
-# consent, private-key, or cleanup-ownership safety.
+# Self-plugin choices are exact, itemized decisions shared by inspection,
+# preview, and live import. They never waive malformed input or authority.
+
+source="$SANDBOX/self-plugins"
+mkdir -p "$source"
+jq '.plugins += [
+  {id:"tsouth89.resurrect",url:"https://github.com/btsouth/omarchy-resurrect",commit:"1111111111111111111111111111111111111111"},
+  {id:"tombychowski.montage",url:"https://github.com/tombychowski/omarchy-montage",commit:"2222222222222222222222222222222222222222"}
+]' "$REPO_DIR/tests/fixtures/ress-v1/loadout/profile.json" >"$source/profile.json"
+
+mntg port ress inspect "$source" --json
+assert_ok "inspection reports undecided self-plugin entries without mutation"
+jq -e '.compatible and (.ready|not) and .reason=="self-plugin-decision-required" and
+  .decisions=={ressPlugin:"required",montagePlugin:"required"} and
+  [.losses[].code]==["ress-self-plugin","montage-self-plugin"] and
+  all(.losses[]; .waivable and (.accepted|not))' <<<"$OUT" >/dev/null && _pass ||
+  _fail "inspection itemizes both exact self-plugin decisions" "$OUT"
 
 library="$SANDBOX/library"
-mntg repository init loadouts "$library" --id loss-library >/dev/null
-mkdir -p "$library/loadouts/native"
-jq '.plugins += [{"id":"tombychowski.montage","url":"https://github.com/tombychowski/montage","commit":"2222222222222222222222222222222222222222"}]' \
-  "$REPO_DIR/tests/fixtures/ress-v1/loadout/profile.json" \
-  >"$library/loadouts/native/profile.json"
-git -C "$library" add -A
-git -C "$library" commit -q -m native
+mntg repository init "$library" --id loss-library >/dev/null
+mntg repository configure target "$library" >/dev/null
 head_before=$(git -C "$library" rev-parse HEAD)
-destination="$SANDBOX/export"
 
-mntg --yes port ress export loadout "$library" --loadout native \
-  --destination "$destination" --montage-plugin omit --json
-assert_exit 3 "general confirmation does not accept representational loss"
-assert_equals "$(jq -r '.reason' <<<"$OUT")" "loss-acceptance-required" \
-  "missing loss acceptance is explicit"
-assert_equals "$(jq -r '.losses[0].code' <<<"$OUT")" "montage-repository-metadata" \
-  "loss is itemized"
-assert_no_file "$destination/profile.json" "unaccepted loss publishes nothing"
+mntg --dry-run port ress import loadout "$source" \
+  --repository target --loadout omitted --json
+assert_exit 3 "dry-run import requires the same self-plugin decisions"
+dry_missing="$OUT"
+assert_no_file "$library/loadouts/omitted/profile.json" "undecided preview publishes nothing"
 
-mntg --yes port ress export loadout "$library" --loadout native \
-  --destination "$destination" --accept-loss all --montage-plugin omit --json
-assert_exit 3 "broad loss acceptance is not a wildcard"
-assert_no_file "$destination/profile.json" "broad loss phrase bypasses no decision"
-
-mntg --yes port ress export loadout "$library" --loadout native \
-  --destination "$destination" --accept-loss montage-repository-metadata --json
-assert_exit 3 "accepted metadata loss does not decide the Montage self-plugin"
-assert_equals "$(jq -r '.kind' <<<"$OUT")" "montage-port-report" \
-  "missing export decisions retain the stable report envelope"
-assert_equals "$(jq -r '.reason' <<<"$OUT")" "montage-self-plugin-decision-required" \
-  "self-plugin decision is requested explicitly"
-assert_no_file "$destination/profile.json" "missing self-plugin decision publishes nothing"
+mntg --yes port ress import loadout "$source" \
+  --repository target --loadout omitted --json
+assert_exit 3 "general confirmation does not answer self-plugin decisions"
+live_missing="$OUT"
+assert_equals "$(jq -S '{warnings,losses,decisions,compatible,ready,reason}' <<<"$live_missing")" \
+  "$(jq -S '{warnings,losses,decisions,compatible,ready,reason}' <<<"$dry_missing")" \
+  "preview and live planning use identical decision data"
 assert_equals "$(git -C "$library" rev-parse HEAD)" "$head_before" \
-  "all refused exports preserve native history"
+  "undecided live import preserves destination history"
 
-ress_self="$SANDBOX/ress-self"
-mkdir "$ress_self"
-jq '.plugins += [{"id":"tsouth89.resurrect","url":"https://github.com/btsouth/omarchy-resurrect","commit":"1111111111111111111111111111111111111111"}]' \
-  "$REPO_DIR/tests/fixtures/ress-v1/loadout/profile.json" >"$ress_self/profile.json"
-target="$SANDBOX/target"
-mntg repository init loadouts "$target" --id target-library >/dev/null
-mntg repository configure target "$target" loadouts >/dev/null
-target_head=$(git -C "$target" rev-parse HEAD)
-mntg --yes port ress import loadout "$ress_self" --repository target --loadout imported --json
-assert_exit 3 "import does not silently reassign the Ress self-plugin"
-assert_equals "$(jq -r '.reason' <<<"$OUT")" "self-plugin-decision-required" \
-  "import asks for an explicit Ress self-plugin decision"
-assert_no_file "$target/loadouts/imported/profile.json" "undecided self-plugin import publishes nothing"
-
-mntg --yes port ress import loadout "$ress_self" --repository target --loadout imported \
+mntg --yes port ress import loadout "$source" --repository target --loadout omitted \
   --ress-plugin omit --json
-assert_ok "explicit Ress self-plugin omission permits import"
-assert_file_lacks "$target/loadouts/imported/profile.json" "tsouth89.resurrect" \
-  "self-plugin omission does not map ownership to Montage"
+assert_exit 3 "deciding only one applicable self-plugin remains incomplete"
+assert_equals "$(jq -r '.decisions.montagePlugin' <<<"$OUT")" "required" \
+  "result identifies the remaining exact decision"
+
+mntg --dry-run port ress import loadout "$source" --repository target --loadout omitted \
+  --ress-plugin omit --montage-plugin omit --json
+assert_ok "exact omission decisions produce a publishable preview"
+omit_preview="$OUT"
+jq -e '.ready and .publication.planned and (.publication.published|not) and
+  .decisions=={ressPlugin:"omit",montagePlugin:"omit"} and
+  all(.losses[]; .accepted)' <<<"$OUT" >/dev/null && _pass ||
+  _fail "preview records accepted exact omission decisions" "$OUT"
+
+mntg --yes port ress import loadout "$source" --repository target --loadout omitted \
+  --ress-plugin omit --montage-plugin omit --json
+assert_ok "exact self-plugin omission permits import"
+assert_equals "$(jq -S '{warnings,losses,decisions,compatible,ready}' <<<"$OUT")" \
+  "$(jq -S '{warnings,losses,decisions,compatible,ready}' <<<"$omit_preview")" \
+  "published import retains preview decision data"
+assert_file_lacks "$library/loadouts/omitted/profile.json" "tsouth89.resurrect" \
+  "Ress plugin omission does not map ownership to Montage"
+assert_file_lacks "$library/loadouts/omitted/profile.json" "tombychowski.montage" \
+  "Montage self-plugin omission is honored independently"
+
+mntg --yes port ress import loadout "$source" --repository target --loadout included \
+  --ress-plugin include --montage-plugin include --json
+assert_ok "exact include decisions preserve both explicit definitions"
+assert_file_contains "$library/loadouts/included/profile.json" "tsouth89.resurrect"
+assert_file_contains "$library/loadouts/included/profile.json" "tombychowski.montage"
 
 credential="$SANDBOX/credential"
-mkdir "$credential"
-jq '.plugins[0].url="https://token@example.invalid/plugin"' \
-  "$REPO_DIR/tests/fixtures/ress-v1/loadout/profile.json" >"$credential/profile.json"
-mntg port ress plan "$credential" --destination "$SANDBOX/credential-target" --json
-assert_fails "credential-bearing Ress input is a non-waivable refusal"
-assert_equals "$(jq -r '.reason' <<<"$OUT")" "malformed-or-unsafe" \
-  "credential refusal is not represented as waivable loss"
-assert_no_output "token@" "credential material is not echoed in the port report"
+mkdir -p "$credential"
+jq '.plugins[0].url="https://user:TOPSECRET@example.com/plugin"' \
+  "$source/profile.json" >"$credential/profile.json"
+mntg --yes port ress import loadout "$credential" --repository target --loadout unsafe \
+  --ress-plugin include --montage-plugin include --json
+assert_fails "credential-bearing input is non-waivable despite explicit decisions"
+assert_equals "$(jq -r '.reason' <<<"$OUT")" "malformed-or-unsafe-profile"
+assert_no_output "TOPSECRET" "non-waivable credential refusal does not echo material"
+assert_no_file "$library/loadouts/unsafe/profile.json" "unsafe input publishes nothing"
 
-hostile="$SANDBOX/hostile"
-cp -a "$REPO_DIR/tests/fixtures/ress-v1/vault" "$hostile"
-ln -s "$SANDBOX/outside" "$hostile/home/escape"
-mntg port ress plan "$hostile" --destination "$SANDBOX/hostile-target" --json
-assert_fails "containment failure is non-waivable"
-assert_equals "$(jq -r '.losses|length' <<<"$OUT")" "0" \
-  "containment failure is never converted into a loss checkbox"
-assert_no_file "$SANDBOX/hostile-target/montage.json" "hostile input publishes nothing"
+mntg --yes port ress import loadout "$source" --repository target --loadout broad \
+  --accept-loss all --json
+assert_fails "retired broad loss acceptance is not a wildcard"
+assert_output "usage: mntg port ress import loadout" \
+  "unsupported decision syntax is rejected by the focused parser"
+assert_no_file "$library/loadouts/broad/profile.json" "unsupported broad consent publishes nothing"

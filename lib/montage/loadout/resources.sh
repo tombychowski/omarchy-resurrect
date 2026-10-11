@@ -6,7 +6,7 @@
 # check, repair, update, remove, and apply. Definitions only at source time.
 
 resource_inspect_json() {
-  local resource="$1" freshness="${2:-snapshot}" kind name definition state evidence target actual_url actual_sha dirty parts actual_icon current
+  local resource="$1" observation="${2:-snapshot}" kind name definition state evidence target actual_url actual_sha dirty parts actual_icon current
   local resource_id effective_theme_loadout
   resource_id=$(jq -r '.id' <<<"$resource")
   kind=$(jq -r '.kind' <<<"$resource")
@@ -15,8 +15,10 @@ resource_inspect_json() {
   state="missing"; evidence='{}'
   case "$kind" in
     package)
-      if { [[ $freshness == live ]] && pacman -Q "$name" >/dev/null 2>&1; } ||
-        { [[ $freshness != live ]] && machine_package_present "$name"; }; then
+      if [[ $observation != live ]] && ! machine_package_snapshot_build; then
+        state="unverifiable"; evidence='{"reason":"package-inventory-unavailable"}'
+      elif { [[ $observation == live ]] && pacman -Q "$name" >/dev/null 2>&1; } ||
+        { [[ $observation != live ]] && machine_package_present "$name"; }; then
         state="present"; evidence=$(jq -nc --arg name "$name" '{package:$name}')
       fi
       ;;
@@ -71,7 +73,7 @@ resource_inspect_json() {
       fi
       ;;
     theme-active)
-      if [[ $freshness == live ]]; then current=$(active_theme_name || true)
+      if [[ $observation == live ]]; then current=$(active_theme_name || true)
       else current=$(machine_active_theme); fi
       effective_theme_loadout=$(jq -r '
         . as $root |
@@ -196,6 +198,9 @@ release_claim() {
   elif [[ $state == present && $cleanup == remove ]]; then
     resource_remove_adapter "$resource" || rc=$?
     (( rc == 0 )) || return "$rc"
+  elif [[ $cleanup == unknown && $decision == keep ]]; then
+    # Successful later observation cannot prove who introduced this resource.
+    :
   elif [[ $state == modified || $state == conflicting || $state == unverifiable || $state == uncertain ]]; then
     if [[ $decision == keep ]]; then
       REGISTRY=$(jq -c --arg rid "$rid" '.resources |= map(if .id == $rid then .cleanupPolicy="retain" else . end)' <<<"$REGISTRY")

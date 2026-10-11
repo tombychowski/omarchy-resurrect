@@ -3,7 +3,7 @@
 # Share candidate discovery, catalog construction, selective validation, and
 # profile/README rendering.
 # Depends on core.sh, safety.sh, registry.sh, profile.sh, and resources.sh. Owns
-# profile-export temporary state; used by share. Definitions only at source time.
+# profile-publication temporary state; used by share. Definitions only at source time.
 
 # ============================================================ SHARE / APPLY
 #
@@ -32,7 +32,7 @@ share_candidate_json() {
       channels:$channels,active:$active,definition:$definition}'
 }
 
-# The canonical live-machine inventory behind both `share catalog` and export.
+# The canonical live-machine inventory behind both `share catalog` and publication.
 # Definitions never come from QML; selected ids are resolved against a fresh
 # answer from here immediately before the profile is written.
 share_candidates_json() {
@@ -200,7 +200,7 @@ share_candidate_matches_item() {
   ' <<<"$candidate" >/dev/null
 }
 
-share_current_export_json() {
+share_current_item_json() {
   local candidates="$1" out="$2" file="$out/profile.json" items item candidate
   local available='[]' unavailable='[]' code reason fingerprint
   if [[ ! -f $file ]]; then
@@ -228,7 +228,7 @@ share_current_export_json() {
     if [[ -n $candidate && $(jq -r '.shareable' <<<"$candidate") == false ]]; then
       code=$(jq -r '.reasonCode' <<<"$candidate"); reason=$(jq -r '.reason' <<<"$candidate")
     elif [[ -n $candidate ]]; then
-      code="definition-mismatch"; reason="current machine definition differs from the exported profile"
+      code="definition-mismatch"; reason="current machine definition differs from the published item"
     else
       code="missing"; reason="resource is not present on this machine"
     fi
@@ -288,54 +288,42 @@ share_presets_json() {
 }
 
 share_catalog_json() {
-  local out="${1:-$PROFILE_DIR_DEFAULT}" repository_id="${2:-}" loadout_id="${3:-}" repository_commit="${4:-}"
+  local out="$1" repository_id="$2" loadout_id="$3" repository_commit="$4"
   local candidates current presets public counts
   candidates=$(share_candidates_json)
-  current=$(share_current_export_json "$candidates" "$out")
+  current=$(share_current_item_json "$candidates" "$out")
   presets=$(share_presets_json "$candidates")
   public=$(jq -c '[.[] | del(.definition)]' <<<"$candidates")
   counts=$(jq -c 'reduce .[] as $r ({}; .[$r.kind] = ((.[$r.kind] // 0) + 1))' <<<"$candidates")
   jq -nc --arg repositoryId "$repository_id" --arg loadoutId "$loadout_id" \
     --arg repositoryCommit "$repository_commit" --argjson resources "$public" \
-    --argjson current "$current" --argjson presets "$presets" --argjson counts "$counts" '
+    --argjson current "$current" --argjson presets "$presets" --argjson counts "$counts" \
+    --argjson migration "$REPOSITORY_REGISTRY_MIGRATION" '
     {schemaVersion:1,kind:"montage-share-catalog",
      repositoryId:(if $repositoryId=="" then null else $repositoryId end),
      loadoutId:(if $loadoutId=="" then null else $loadoutId end),
      repositoryCommit:(if $repositoryCommit=="" then null else $repositoryCommit end),
-     resources:$resources,currentExport:$current,presets:$presets,counts:$counts,limits:{themes:1}}'
+     resources:$resources,currentItem:$current,presets:$presets,counts:$counts,limits:{themes:1},migration:$migration}'
 }
 
 cmd_share_catalog() {
-  local as_json=0 out="$PROFILE_DIR_DEFAULT" repository="" loadout_id="" repository_id="" repository_commit=""
+  local as_json=0 out repository="" loadout_id="" repository_id repository_commit
   while (( $# > 0 )); do
     case "$1" in
       --json) as_json=1; shift ;;
-      --out) out="${2:-}"; shift 2 ;;
       --repository) repository="${2:-}"; shift 2 ;;
       --loadout) loadout_id="${2:-}"; shift 2 ;;
       *) die "unknown share catalog option: $1" ;;
     esac
   done
-  (( as_json )) || die "usage: mntg share catalog --json"
-  if [[ -n $repository || -n $loadout_id ]]; then
-    [[ -n $repository && -n $loadout_id ]] || die "share catalog requires both --repository and --loadout"
-    repository_id_valid "$loadout_id" || die "invalid stable loadout id"
-    loadout_repository_resolve "$repository" || die "loadout repository is invalid or unavailable"
-    out="$LOADOUT_REPOSITORY_PATH/loadouts/$loadout_id"
-    repository_id=$(jq -r '.id' "$LOADOUT_REPOSITORY_PATH/$MONTAGE_REPOSITORY_MANIFEST")
-    repository_commit=$(git -C "$LOADOUT_REPOSITORY_PATH" rev-parse HEAD^{commit} 2>/dev/null || true)
-  fi
-  [[ -n $out ]] || die "profile output directory must not be empty"
+  (( as_json )) || die "usage: mntg share catalog --json --repository NAME --loadout ID"
+  [[ -n $repository && -n $loadout_id ]] || die "share catalog requires both --repository and --loadout"
+  repository_id_valid "$loadout_id" || die "invalid stable loadout id"
+  loadout_repository_resolve "$repository" || die "loadout repository is invalid or unavailable"
+  out="$LOADOUT_REPOSITORY_PATH/loadouts/$loadout_id"
+  repository_id=$(jq -r '.id' "$LOADOUT_REPOSITORY_PATH/$MONTAGE_REPOSITORY_MANIFEST")
+  repository_commit=$(git -C "$LOADOUT_REPOSITORY_PATH" rev-parse HEAD^{commit} 2>/dev/null || true)
   share_catalog_json "$out" "$repository_id" "$loadout_id" "$repository_commit" | jq .
-}
-
-take_profile_lock() {
-  local out="$1" digest lock_dir="$STATE_DIR/profile-locks"
-  out=$(realpath -m -- "$out")
-  digest=$(printf '%s' "$out" | sha256sum | awk '{print substr($1,1,24)}')
-  private_dir "$lock_dir"
-  exec 7>"$lock_dir/$digest.lock"
-  flock -n 7 || die "another export is already writing this profile"
 }
 
 render_share_profile() {
@@ -358,13 +346,12 @@ render_share_profile() {
 }
 
 render_share_readme() {
-  local profile="$1" output="$2" loadout_id="${3:-}" repository_url="${4:-<repository-url>}"
+  local profile="$1" output="$2" loadout_id="$3" repository_url="${4:-<repository-url>}"
   local name theme n_pkg n_aur n_plug n_web apply_command
   name=$(jq -r '.name' "$profile"); theme=$(jq -r '.theme.name' "$profile")
   n_pkg=$(jq '.packages.native | length' "$profile"); n_aur=$(jq '.packages.aur | length' "$profile")
   n_plug=$(jq '.plugins | length' "$profile"); n_web=$(jq '.webapps | length' "$profile")
-  apply_command="mntg apply $repository_url"
-  [[ -z $loadout_id ]] || apply_command+=" --loadout $loadout_id"
+  apply_command="mntg apply $repository_url --loadout $loadout_id"
   cat >"$output" <<PROFILE_README
 # $name
 
@@ -387,15 +374,14 @@ PROFILE_README
 cmd_share() {
   if [[ ${1:-} == catalog ]]; then shift; cmd_share_catalog "$@"; return; fi
 
-  local out="$PROFILE_DIR_DEFAULT" name="" description="" custom=0 candidates selected='[]'
-  local repository="" loadout_id="" repository_mode=0 repository_root=""
+  local out name="" description="" custom=0 candidates selected='[]'
+  local repository="" loadout_id="" repository_root
   local configured_remote="" share_url=""
   local current item candidate id fingerprint theme_count unavailable provided
   local selected_ids=() ack_ids=() ack_fingerprints=()
   declare -A seen_selected=() acknowledgements=()
   while (( $# > 0 )); do
     case "$1" in
-      --out) out="${2:-}"; shift 2 ;;
       --repository) repository="${2:-}"; shift 2 ;;
       --loadout) loadout_id="${2:-}"; shift 2 ;;
       --name) name="${2:-}"; shift 2 ;;
@@ -410,18 +396,15 @@ cmd_share() {
   [[ -n $name ]] || name="$(whoami)'s Omarchy"
   profile_metadata_valid "$name" "$description" ||
     die "loadout name must be 1-120 display-safe characters and description at most 1000"
-  if [[ -n $repository || -n $loadout_id ]]; then
-    [[ -n $repository && -n $loadout_id ]] || die "share requires both --repository and --loadout"
-    repository_id_valid "$loadout_id" || die "invalid stable loadout id"
-    loadout_repository_resolve "$repository" || die "loadout repository is invalid or unavailable"
-    repository_root="$LOADOUT_REPOSITORY_PATH"
-    if [[ $repository != /* ]]; then
-      configured_remote=$(repository_registry_get "$repository" | jq -r '.remote')
-    fi
-    out="$repository_root/loadouts/$loadout_id"
-    repository_mode=1
+  [[ -n $repository && -n $loadout_id ]] || die "share requires both --repository and --loadout"
+  repository_id_valid "$loadout_id" || die "invalid stable loadout id"
+  loadout_repository_resolve "$repository" || die "loadout repository is invalid or unavailable"
+  repository_root="$LOADOUT_REPOSITORY_PATH"
+  repository_migration_notice
+  if [[ $repository != /* ]]; then
+    configured_remote=$(repository_registry_get "$repository" | jq -r '.remote')
   fi
-  [[ -n $out ]] || die "profile output directory must not be empty"
+  out="$repository_root/loadouts/$loadout_id"
   if (( custom )); then
     (( ${#selected_ids[@]} > 0 )) || die "a custom loadout must select at least one resource"
   elif (( ${#selected_ids[@]} + ${#ack_ids[@]} > 0 )); then
@@ -430,13 +413,9 @@ cmd_share() {
 
   emit "BEGIN|share|$out"
   step_start share "Reading this machine"
-  if (( repository_mode )); then
-    repository_lock "$repository_root" || die "another operation is using this repository"
-    repository_recover_publication "$repository_root" || die "repository publication recovery failed"
-    repository_worktree_clean "$repository_root" || die "repository working tree must be clean before sharing"
-  else
-    take_profile_lock "$out"
-  fi
+  repository_lock "$repository_root" || die "another operation is using this repository"
+  repository_recover_publication "$repository_root" || die "repository publication recovery failed"
+  repository_worktree_clean "$repository_root" || die "repository working tree must be clean before sharing"
   candidates=$(share_candidates_json)
 
   if (( custom )); then
@@ -459,7 +438,7 @@ cmd_share() {
         die "invalid duplicate or empty unavailable-resource acknowledgement"
       acknowledgements[$id]="$fingerprint"
     done
-    current=$(share_current_export_json "$candidates" "$out")
+    current=$(share_current_item_json "$candidates" "$out")
     [[ $(jq -r '.state' <<<"$current") != unavailable ]] ||
       die "current profile is malformed or unsupported; refusing selective replacement"
     if [[ $(jq -r '.state' <<<"$current") == valid ]]; then
@@ -479,23 +458,14 @@ cmd_share() {
       "$(plural "$left_out" "web app") left out of the profile — the format cannot reproduce its launcher"
   fi
 
-  local parent; parent=$(dirname "$out")
-  if (( repository_mode )); then
-    repository_stage_dir "$repository_root" || die "could not create repository staging directory"
-    PROFILE_WORK="$REPOSITORY_STAGE"
-  else
-    mkdir -p "$parent"
-    montage_make_temp_dir "$parent/.mntg-profile.XXXXXX" || die "could not create profile workspace"
-    PROFILE_WORK="$MONTAGE_TEMP_PATH"
-  fi
+  repository_stage_dir "$repository_root" || die "could not create repository staging directory"
+  PROFILE_WORK="$REPOSITORY_STAGE"
   render_share_profile "$candidates" "$selected" "$PROFILE_WORK/profile.json" "$name" "$description"
-  if (( repository_mode )); then
-    share_url=$(canonical_share_url \
-      "${configured_remote:-$(git -C "$repository_root" remote get-url origin 2>/dev/null || true)}" \
-      2>/dev/null || true)
-  fi
+  share_url=$(canonical_share_url \
+    "${configured_remote:-$(git -C "$repository_root" remote get-url origin 2>/dev/null || true)}" \
+    2>/dev/null || true)
   render_share_readme "$PROFILE_WORK/profile.json" "$PROFILE_WORK/README.md" \
-    "$([[ $repository_mode == 1 ]] && printf '%s' "$loadout_id")" "${share_url:-<repository-url>}"
+    "$loadout_id" "${share_url:-<repository-url>}"
 
   local n_pkg n_aur n_plug n_web
   n_pkg=$(jq '.packages.native | length' "$PROFILE_WORK/profile.json")
@@ -503,67 +473,36 @@ cmd_share() {
   n_plug=$(jq '.plugins | length' "$PROFILE_WORK/profile.json")
   n_web=$(jq '.webapps | length' "$PROFILE_WORK/profile.json")
 
-  if (( repository_mode )); then
-    repository_publish_path "$repository_root" "$PROFILE_WORK" "loadouts/$loadout_id" \
-      loadout_repository_stage_item_valid || die "generated loadout failed validation"
-    PROFILE_WORK=""
-    repository_commit_if_changed "$repository_root" "Update loadout $loadout_id" ||
-      die "could not commit loadout update"
-    repository_unlock
-  else
-    mkdir -p "$out"
-    mv "$PROFILE_WORK/profile.json" "$out/profile.json"
-    mv "$PROFILE_WORK/README.md" "$out/README.md"
-    rm -rf "$PROFILE_WORK"; PROFILE_WORK=""
-
-    if [[ ! -d $out/.git ]]; then
-      git -C "$out" init -q -b main
-      git -C "$out" add -A
-      git -C "$out" -c commit.gpgsign=false commit -q -m "Loadout: $name" 2>/dev/null || true
-    else
-      git -C "$out" add -A
-      git -C "$out" diff --cached --quiet ||
-        git -C "$out" -c commit.gpgsign=false commit -q -m "Update loadout" 2>/dev/null || true
-    fi
-  fi
+  repository_publish_path "$repository_root" "$PROFILE_WORK" "loadouts/$loadout_id" \
+    loadout_repository_stage_item_valid || die "generated loadout failed validation"
+  PROFILE_WORK=""
+  repository_commit_if_changed "$repository_root" "Update loadout $loadout_id" ||
+    die "could not commit loadout update"
+  repository_unlock
 
   step_ok share "$(plural "$n_pkg" package), $n_aur AUR, $(plural "$n_plug" plugin), $(plural "$n_web" "web app")"
 
   local origin link
-  if (( repository_mode )); then
-    origin=$(canonical_remote "$(git -C "$repository_root" remote get-url origin 2>/dev/null || true)")
-    [[ -z $origin ]] || git -C "$repository_root" remote set-url origin "$origin" 2>/dev/null || true
-  else
-    origin=$(canonical_remote "$(git -C "$out" remote get-url origin 2>/dev/null || true)")
-    [[ -z $origin ]] || git -C "$out" remote set-url origin "$origin" 2>/dev/null || true
-  fi
+  origin=$(canonical_remote "$(git -C "$repository_root" remote get-url origin 2>/dev/null || true)")
+  [[ -z $origin ]] || git -C "$repository_root" remote set-url origin "$origin" 2>/dev/null || true
   link=""
   [[ -n $origin ]] && link=$(canonical_share_url "$origin" 2>/dev/null || true)
-  if (( repository_mode )) && [[ -n $configured_remote ]]; then
+  if [[ -n $configured_remote ]]; then
     link=$(canonical_share_url "$configured_remote" 2>/dev/null || true)
   fi
-  if [[ -n $link ]]; then CFG[PROFILE_URL]="$link"; save_config; fi
   emit "DONE|ok|$out"
 
   if (( ! PORCELAIN )); then
     printf '\n%sLoadout written to %s%s\n\n' "$c_bold" "$out" "$c_reset"
     if [[ -n $link ]]; then
-      if (( repository_mode )); then
-        printf 'Share this line:\n\n  %smntg apply %s --loadout %s%s\n\n' \
-          "$c_green" "$link" "$loadout_id" "$c_reset"
-      else
-        printf 'Share this line:\n\n  %smntg apply %s%s\n\n' "$c_green" "$link" "$c_reset"
-      fi
+      printf 'Share this line:\n\n  %smntg apply %s --loadout %s%s\n\n' \
+        "$c_green" "$link" "$loadout_id" "$c_reset"
     else
       printf 'Push it to a public repo, then share the one-liner:\n\n'
       printf '  %scd %s\n  git remote add origin git@github.com:you/my-omarchy-loadouts.git\n  git push -u origin main%s\n\n' \
-        "$c_dim" "${repository_root:-$out}" "$c_reset"
-      if (( repository_mode )); then
-        printf '  %smntg apply https://github.com/you/my-omarchy-loadouts --loadout %s%s\n\n' \
-          "$c_green" "$loadout_id" "$c_reset"
-      else
-        printf '  %smntg apply https://github.com/you/my-omarchy-loadout%s\n\n' "$c_green" "$c_reset"
-      fi
+        "$c_dim" "$repository_root" "$c_reset"
+      printf '  %smntg apply https://github.com/you/my-omarchy-loadouts --loadout %s%s\n\n' \
+        "$c_green" "$loadout_id" "$c_reset"
     fi
   fi
 }

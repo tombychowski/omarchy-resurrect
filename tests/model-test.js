@@ -1,287 +1,137 @@
-// Unit tests for Model.js, the formatting the panel and the bar icon share.
-//
-// Model.js is a QML `.pragma library`: plain JavaScript with no QML API in it,
-// which is exactly why it can be tested here rather than by starting a shell.
-// The pragma line is stripped before evaluating, since node does not know it.
-//
-// Run through tests/cases/16-qml.sh, or directly: node tests/model-test.js
-
+// Unit tests for the strict, plain-JavaScript panel protocol adapters.
 const fs = require("fs");
 const path = require("path");
-
-const source = fs
-  .readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
+const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
   .replace(/^\s*\.pragma\s+library\s*$/m, "");
-
-const Model = {};
-new Function("exports", source + "\n" + [
-  "CATEGORIES", "ago", "freshness", "stripCredentials", "isRessLocation",
-  "plural", "summarize", "parseRecord", "consent",
-  "parseRepositoryList", "parseLoadoutCatalog", "parseBackupList", "parseRetentionResult", "parseSyncResult", "parsePortReport",
-  "repositoryPanelState",
-  "loadoutState", "resourceHealth", "parseLoadoutList", "parseLoadoutCheck", "mergeLoadoutViews",
-  "summarizeLoadoutContent", "loadoutContentNames",
+const names = ["ATTENTION_STATES", "SHARE_KINDS", "stripCredentials", "plural", "consent",
+  "attentionLabel", "attentionTone", "parseStatus", "parseRecord", "parseRepositoryList",
+  "parseLoadoutCatalog", "parseSyncResult", "parseLoadoutList", "parseLoadoutCheck",
+  "mergeLoadoutViews", "loadoutState", "resourceHealth", "parseRessMigration",
   "parseShareCatalog", "shareSelection", "selectedShareIds", "toggleShareResource",
-  "shareCounts", "sharePresetWarnings", "addSharePreset", "filterShareResources", "unacknowledgedShareResources",
-].map((name) => `exports.${name} = typeof ${name} !== "undefined" ? ${name} : undefined;`)
-  .join("\n"))(Model);
+  "filterShareResources", "unacknowledgedShareResources", "addSharePreset"];
+const Model = {};
+new Function("exports", source + "\n" + names.map((name) =>
+  `exports.${name} = typeof ${name} !== "undefined" ? ${name} : undefined;`).join("\n"))(Model);
 
 let failures = 0;
-function check(what, got, want) {
-  const g = JSON.stringify(got);
-  const w = JSON.stringify(want);
-  if (g !== w) {
-    console.log(`  FAIL ${what}\n       want ${w}\n       got  ${g}`);
+function check(label, got, want) {
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    console.log(`  FAIL ${label}\n       want ${JSON.stringify(want)}\n       got  ${JSON.stringify(got)}`);
     failures++;
   }
 }
 
-// ---- consent: a setting with three states, none of them "on" -------------
-check("consent yes", Model.consent("yes", "always", "never", "asks"), "always");
-check("consent no", Model.consent("no", "always", "never", "asks"), "never");
-check("consent ask", Model.consent("ask", "always", "never", "asks"), "asks");
-// Anything unrecognised has to read as "ask", the same way the CLI's
-// units_decision_kind and aur_gate fall back, or the panel would tell you a
-// machine is set to something it is not.
-check("consent junk", Model.consent("wat", "always", "never", "asks"), "asks");
-check("consent empty", Model.consent("", "always", "never", "asks"), "asks");
-check("consent undefined", Model.consent(undefined, "always", "never", "asks"), "asks");
+check("attention vocabulary", Model.ATTENTION_STATES, ["healthy", "update-available",
+  "repair-needed", "drifted", "repository-attention", "unavailable-or-invalid",
+  "operation-partial-or-failed", "operation-active"]);
+check("healthy label", Model.attentionLabel("healthy"), "Loadouts healthy");
+check("active tone", Model.attentionTone("operation-active"), "active");
+check("invalid label", Model.attentionLabel("anything"), "Loadout status unavailable");
+check("AUR ask", Model.consent("ask"), "ask before building · recommended");
+check("plural", Model.plural(2, "library", "libraries"), "2 libraries");
+check("strip credentials", Model.stripCredentials("https://u:p@example.test/repo"),
+  "https://example.test/repo");
 
-// ---- plural / summarize --------------------------------------------------
-check("plural 1", Model.plural(1, "plugin"), "1 plugin");
-check("plural 2", Model.plural(2, "plugin"), "2 plugins");
-check("plural 0", Model.plural(0, "plugin"), "0 plugins");
-check("plural irregular", Model.plural(2, "entry", "entries"), "2 entries");
-check("summarize", Model.summarize({ packages: 1, config: 2, webapps: 0, plugins: 3 }),
-  "1 package · 2 config paths · 0 web apps · 3 plugins");
-check("summarize nothing", Model.summarize(null), "");
+const status = { schemaVersion: 1, kind: "montage-status", attention: "healthy", causes: [],
+  operation: { active: false, valid: true, ownerPid: null },
+  loadouts: { available: true, evidenceValid: true, count: 0, attention: 0,
+    repairNeeded: 0, drifted: 0, partialOrFailed: 0, updateAvailable: 0, items: [] },
+  repositories: { available: true, count: 0, attention: 0, items: [], migration: null },
+  settings: { aur: "ask" }, migration: null };
+check("parse healthy status", Model.parseStatus(status), status);
+check("parse valid empty status", Model.parseStatus(status).loadouts.items, []);
+check("reject unknown attention", Model.parseStatus({ ...status, attention: "stale" }), null);
+check("reject malformed optional source", Model.parseStatus({ ...status,
+  loadouts: { ...status.loadouts, available: "yes" } }), null);
+check("parse status record", Model.parseRecord("STATUS|1|healthy|0|0").attention, "healthy");
+check("parse Ress record", Model.parseRecord("RESS|1|inspect|true|true|false|").operation, "inspect");
+check("reject obsolete prose", Model.parseRecord("backup complete"), null);
 
-// ---- freshness / ago -----------------------------------------------------
-const now = 1000000;
-check("freshness none", Model.freshness(0, now, 48), "none");
-check("freshness fresh", Model.freshness(now - 3600, now, 48), "fresh");
-check("freshness stale", Model.freshness(now - 49 * 3600, now, 48), "stale");
-check("freshness custom threshold", Model.freshness(now - 2 * 3600, now, 1), "stale");
-check("ago never", Model.ago(0, now), "never");
-check("ago just now", Model.ago(now - 5, now), "just now");
-check("ago minutes", Model.ago(now - 300, now), "5m ago");
-check("ago hours", Model.ago(now - 7200, now), "2h ago");
-check("ago days", Model.ago(now - 3 * 86400, now), "3d ago");
-// A clock that went backwards must not produce a negative age.
-check("ago future", Model.ago(now + 5000, now), "just now");
-
-// ---- stripCredentials ----------------------------------------------------
-check("strip token", Model.stripCredentials("https://TOKEN@github.com/a/b"),
-  "https://github.com/a/b");
-check("strip user:pass", Model.stripCredentials("https://u:p@github.com/a/b"),
-  "https://github.com/a/b");
-check("strip nothing to strip", Model.stripCredentials("https://github.com/a/b"),
-  "https://github.com/a/b");
-check("strip empty", Model.stripCredentials(""), "");
-check("recognize Ress live root", Model.isRessLocation("/home/me/.local/share/ress/vault"), true);
-check("recognize Ress directory", Model.isRessLocation("/srv/ress/loadouts"), true);
-check("Montage location is independent", Model.isRessLocation("/home/me/.local/share/montage/vault"), false);
-
-// ---- parseRecord: the --porcelain protocol the panel reads ---------------
-check("parse step", Model.parseRecord("STEP|packages|ok|done"),
-  { type: "step", category: "packages", state: "ok", message: "done" });
-check("parse begin", Model.parseRecord("BEGIN|restore|/v").action, "restore");
-check("parse progress", Model.parseRecord("PROGRESS|config|3|10"),
-  { type: "progress", category: "config", done: 3, total: 10 });
-check("parse log", Model.parseRecord("LOG|will run: 1 Omarchy hook").message,
-  "will run: 1 Omarchy hook");
-check("parse done", Model.parseRecord("DONE|fail|blocked by the secret scan").state, "fail");
-check("parse sync", Model.parseRecord("SYNC|1|divergent|2|3|true|preview|false|decision-required"),
-  { type: "sync", schemaVersion: 1, status: "divergent", ahead: 2, behind: 3,
-    fetchOk: true, performed: "preview", actionOk: false, reason: "decision-required" });
-check("parse port", Model.parseRecord("PORT|1|import-vault|vault|true|false|preview"),
-  { type: "port", schemaVersion: 1, operation: "import-vault", artifactType: "vault",
-    compatible: true, published: false, reason: "preview" });
-check("reject newer sync record", Model.parseRecord("SYNC|2|equal|0|0|true|preview|true|"), null);
-// A message containing the separator must survive intact, since paths and
-// commands in LOG records legitimately contain one.
-check("parse embedded pipes", Model.parseRecord("LOG|a|b|c").message, "a|b|c");
-// Anything that is not a record is not a record: the panel drops it rather
-// than half-parsing it.
-check("parse prose", Model.parseRecord("Possible credentials in the vault"), null);
-check("parse empty", Model.parseRecord(""), null);
-check("parse null", Model.parseRecord(null), null);
-
-// ---- loadout lifecycle JSON ---------------------------------------------
-const loadout = { id: "work-a1b2", name: "Work", state: "healthy",
-  resourceCount: 3, attentionCount: 0 };
-const loadoutList = (loadouts) => ({ schemaVersion: 1, kind: "montage-applied-loadout-list", loadouts });
-const loadoutCheck = (healthy, loadouts) => ({ schemaVersion: 1, kind: "montage-loadout-check", healthy, loadouts });
-check("parse loadout list", Model.parseLoadoutList(loadoutList([loadout])), [loadout]);
-check("parse empty loadout list", Model.parseLoadoutList(loadoutList([])), []);
-check("reject malformed loadout result", Model.parseLoadoutList(loadoutList([{ id: "x" }])), null);
-check("reject unknown loadout state", Model.parseLoadoutList(loadoutList([{ ...loadout, state: "magic" }])), null);
-const checked = { id: "work-a1b2", name: "Work", state: "drifted", attentionCount: 1,
-  resources: [{ id: "package:fd", currentState: "missing", healthState: "missing" }] };
-check("parse live loadout health", Model.parseLoadoutCheck(loadoutCheck(false, [checked])), [checked]);
-check("reject malformed live resource", Model.parseLoadoutCheck(loadoutCheck(false, [
-  { ...checked, resources: [{ id: "package:fd", currentState: "magic" }] }
-])), null);
-check("merge stored content with live health", Model.mergeLoadoutViews([loadout], [checked]), [{
-  ...loadout, state: "drifted", attentionCount: 1, resources: checked.resources
-}]);
-check("reject unmatched live health", Model.mergeLoadoutViews([loadout], []), null);
-check("loadout healthy label", Model.loadoutState("healthy"), "Healthy");
-check("loadout pending label", Model.loadoutState("pending"), "Pending work");
-check("loadout unknown label", Model.loadoutState("newer-state"), "Unavailable");
-check("missing resource needs attention", Model.resourceHealth("missing"), "attention");
-check("unverifiable resource is unknown", Model.resourceHealth("unverifiable"), "unknown");
-const profile = { packages: { native: ["fd"], aur: ["brave-bin"] },
-  plugins: [{ id: "acme.widget" }], webapps: [{ name: "Draw" }], theme: { name: "night" } };
-check("summarize loadout content", Model.summarizeLoadoutContent(profile),
-  "2 packages · 1 plugin · 1 web app · theme night");
-check("list loadout content names", Model.loadoutContentNames(profile),
-  "fd · brave-bin · acme.widget · Draw · night");
-
-// ---- share catalog and composer state -----------------------------------
-const fingerprint = "a".repeat(64);
-const shareCatalog = {
-  schemaVersion: 1,
-  kind: "montage-share-catalog",
-  repositoryId: "personal-library",
-  loadoutId: "work-1",
-  repositoryCommit: "a".repeat(40),
-  resources: [
-    { id: "package:fd", kind: "package", name: "fd", shareable: true,
-      reasonCode: "", reason: "", channels: ["native"], active: false },
-    { id: "plugin:acme.widget", kind: "plugin", name: "acme.widget", shareable: true,
-      reasonCode: "", reason: "", channels: [], active: false },
-    { id: "theme-install:night", kind: "theme", name: "night", shareable: true,
-      reasonCode: "", reason: "", channels: [], active: true },
-    { id: "theme-install:day", kind: "theme", name: "day", shareable: true,
-      reasonCode: "", reason: "", channels: [], active: false },
-    { id: "webapp:Flags", kind: "webapp", name: "Flags", shareable: false,
-      reasonCode: "unsupported-launcher", reason: "flags", channels: [], active: false },
-  ],
-  currentExport: { state: "valid", name: "Mine", description: "desc",
-    resourceIds: ["package:fd"], unavailable: [
-      { id: "plugin:old", kind: "plugin", name: "old", reasonCode: "missing",
-        reason: "gone", fingerprint }
-    ] },
-  presets: { state: "valid", loadouts: [
-    { id: "work-1", name: "Work", resourceIds: ["plugin:acme.widget", "theme-install:day"],
-      warnings: [{ id: "webapp:missing", state: "missing" }] }
-  ] },
-  counts: { package: 1, plugin: 1, theme: 2, webapp: 1 }, limits: { themes: 1 }
-};
-check("parse share catalog", Model.parseShareCatalog(shareCatalog), shareCatalog);
-check("reject unknown share kind", Model.parseShareCatalog({ ...shareCatalog,
-  resources: [{ ...shareCatalog.resources[0], kind: "file" }] }), null);
-check("reject unavailable without reason", Model.parseShareCatalog({ ...shareCatalog,
-  resources: [{ ...shareCatalog.resources[4], reasonCode: "" }] }), null);
-check("reject unknown share reason", Model.parseShareCatalog({ ...shareCatalog,
-  resources: [{ ...shareCatalog.resources[4], reasonCode: "anything" }] }), null);
-check("reject package with unknown channel", Model.parseShareCatalog({ ...shareCatalog,
-  resources: [{ ...shareCatalog.resources[0], channels: ["flatpak"] }] }), null);
-check("reject partial catalog", Model.parseShareCatalog({ ...shareCatalog, limits: undefined }), null);
-check("reject malformed unavailable fingerprint", Model.parseShareCatalog({ ...shareCatalog,
-  currentExport: { ...shareCatalog.currentExport, unavailable: [
-    { ...shareCatalog.currentExport.unavailable[0], fingerprint: "short" }
-  ] } }), null);
-check("all start selects shareable resources and only the active theme",
-  Model.selectedShareIds(Model.shareSelection(shareCatalog, "all")),
-  ["package:fd", "plugin:acme.widget", "theme-install:night"]);
-check("current start", Model.selectedShareIds(Model.shareSelection(shareCatalog, "current")), ["package:fd"]);
-check("empty start", Model.selectedShareIds(Model.shareSelection(shareCatalog, "empty")), []);
-check("preset start", Model.selectedShareIds(Model.shareSelection(shareCatalog, "preset", "work-1")),
-  ["plugin:acme.widget", "theme-install:day"]);
-check("preset warnings are explicit", Model.sharePresetWarnings(shareCatalog.presets.loadouts[0]),
-  "webapp:missing (missing)");
-check("selected category counts", Model.shareCounts(shareCatalog,
-  { "package:fd": true, "plugin:acme.widget": true }),
-  { package: 1, plugin: 1, webapp: 0, theme: 0, total: 2 });
-let selection = Model.toggleShareResource(shareCatalog, { "theme-install:night": true }, "theme-install:day");
-check("theme toggle replaces prior theme", Model.selectedShareIds(selection), ["theme-install:day"]);
-selection = Model.toggleShareResource(shareCatalog, selection, "webapp:Flags");
-check("unavailable resource cannot be toggled", Model.selectedShareIds(selection), ["theme-install:day"]);
-let added = Model.addSharePreset(shareCatalog, { "package:fd": true, "theme-install:night": true }, "work-1");
-check("preset union retains manual resources", Model.selectedShareIds(added.selection),
-  ["package:fd", "plugin:acme.widget", "theme-install:night"]);
-check("preset union reports theme conflict", added.themeConflict, "theme-install:day");
-check("share search filters and bounds", Model.filterShareResources(shareCatalog, "theme", "day", 1).map(x => x.id),
-  ["theme-install:day"]);
-check("unavailable resource needs acknowledgement", Model.unacknowledgedShareResources(shareCatalog, {}).map(x => x.id),
-  ["plugin:old"]);
-check("matching acknowledgement satisfies resource", Model.unacknowledgedShareResources(shareCatalog,
-  { "plugin:old": fingerprint }), []);
-const largeCatalog = { ...shareCatalog, resources: Array.from({ length: 1000 }, (_, i) => ({
-  id: `package:pkg-${String(i).padStart(4, "0")}`, kind: "package",
-  name: `pkg-${String(i).padStart(4, "0")}`, shareable: true,
-  reasonCode: "", reason: "", channels: ["native"], active: false
-})), counts: { package: 1000 }, currentExport: { state: "absent", name: "Mine",
-  description: "", resourceIds: [], unavailable: [] },
-  presets: { state: "unavailable", loadouts: [], reasonCode: "invalid-registry", reason: "bad" } };
-check("large catalog validates", Model.parseShareCatalog(largeCatalog), largeCatalog);
-check("large catalog detail is bounded", Model.filterShareResources(largeCatalog, "package", "", 200).length, 200);
-
-// ---- repository, history, sync, and port JSON ---------------------------
 const repositoryList = { schemaVersion: 1, kind: "montage-repository-list", revision: 2,
   repositories: [{ name: "personal", path: "/tmp/personal", type: "loadouts",
-    id: "personal-library", remote: "https://github.com/example/loadouts", valid: true, status: "healthy" }] };
-check("parse repository list", Model.parseRepositoryList(repositoryList), repositoryList);
-check("reject credentialed repository list", Model.parseRepositoryList({ ...repositoryList,
-  repositories: [{ ...repositoryList.repositories[0], remote: undefined }] }), null);
-const repositoryCommit = "b".repeat(40);
-const loadoutCatalog = { schemaVersion: 1, kind: "montage-loadout-catalog",
-  repositoryId: "personal-library", repositoryCommit, path: "/tmp/personal",
-  items: [{ id: "work-1", name: "Work", repositoryId: "personal-library",
-    repositoryCommit, digest: "c".repeat(64) }], invalid: [] };
-check("parse repository loadouts", Model.parseLoadoutCatalog(loadoutCatalog), loadoutCatalog);
-check("reject catalog identity mismatch", Model.parseLoadoutCatalog({ ...loadoutCatalog,
-  items: [{ ...loadoutCatalog.items[0], repositoryId: "other" }] }), null);
-const backupList = { schemaVersion: 1, kind: "montage-backup-list", repositoryId: "laptop-vault",
-  path: "/tmp/vault", backups: [{ commit: "d".repeat(40), createdAt: "2026-10-06T00:00:00Z",
-    labels: ["before-upgrade"], counts: { packages: 2 }, sourceMachine: { hostname: "laptop" } }] };
-check("parse backup history", Model.parseBackupList(backupList), backupList);
-check("reject abbreviated backup identity", Model.parseBackupList({ ...backupList,
-  backups: [{ ...backupList.backups[0], commit: "deadbeef" }] }), null);
-const retention = { schemaVersion: 1, kind: "montage-backup-retention", repositoryId: "laptop-vault",
-  keep: 10, changed: true, kept: ["d".repeat(40)], removed: ["e".repeat(40)],
-  protectedLabels: [], blocked: false, remoteDivergence: true, rewritten: [] };
-check("parse retention preview", Model.parseRetentionResult(retention), retention);
-check("reject partial retention preview", Model.parseRetentionResult({ ...retention, removed: undefined }), null);
-const syncResult = { schemaVersion: 1, kind: "montage-repository-sync", repositoryId: "personal-library",
-  repositoryType: "loadouts", path: "/tmp/personal", remote: "https://github.com/example/loadouts",
-  status: "divergent", localCommit: "e".repeat(40), remoteCommit: "f".repeat(40), ahead: 1, behind: 2,
-  fetch: { ok: true, errorCode: null } };
-check("parse divergent sync", Model.parseSyncResult(syncResult), syncResult);
-check("reject credentialed sync remote", Model.parseSyncResult({ ...syncResult,
-  remote: "https://TOKEN@github.com/example/loadouts" }), null);
-const portReport = { schemaVersion: 1, kind: "montage-port-report", operation: "import-vault",
-  artifactType: "vault", format: "ress-v1", artifactVersion: 1, source: "/tmp/ress-vault",
-  destination: "/tmp/montage-vault", selectedRevisions: [], warnings: [], losses: [], mutations: [], compatible: true };
-check("parse port preview", Model.parsePortReport(portReport), portReport);
-check("parse another bounded port format", Model.parsePortReport({ ...portReport, format: "other-v2" }),
-  { ...portReport, format: "other-v2" });
-check("parse another bounded artifact type", Model.parsePortReport({ ...portReport, artifactType: "bundle" }),
-  { ...portReport, artifactType: "bundle" });
-check("reject unsafe port format id", Model.parsePortReport({ ...portReport, format: "Other/v2" }), null);
-check("reject unsafe port artifact type", Model.parsePortReport({ ...portReport, artifactType: "../vault" }), null);
-check("reject unversioned port preview", Model.parsePortReport({ ...portReport, schemaVersion: 2 }), null);
-check("repository panel loading", Model.repositoryPanelState(true, null, null, null, null), "loading");
-check("repository panel invalid", Model.repositoryPanelState(false, null, null, null, null), "invalid");
-check("repository panel empty", Model.repositoryPanelState(false,
-  { ...repositoryList, repositories: [] }, null, null, null), "empty");
-check("repository panel attention", Model.repositoryPanelState(false, repositoryList,
-  repositoryList.repositories[0], loadoutCatalog, { ...syncResult, status: "fetch-failed" }), "attention");
-check("repository panel healthy", Model.repositoryPanelState(false, repositoryList,
-  repositoryList.repositories[0], loadoutCatalog, { ...syncResult, status: "equal" }), "healthy");
-check("repository panel stale", Model.repositoryPanelState(false, repositoryList,
-  repositoryList.repositories[0], loadoutCatalog, { ...syncResult, status: "remote-ahead" }), "stale");
-check("repository panel divergent", Model.repositoryPanelState(false, repositoryList,
-  repositoryList.repositories[0], loadoutCatalog, syncResult), "divergent");
+    id: "personal-library", remote: "https://example.test/loadouts", valid: true,
+    status: "healthy" }] };
+check("parse loadout-only libraries", Model.parseRepositoryList(repositoryList), repositoryList);
+check("reject vault kind", Model.parseRepositoryList({ ...repositoryList,
+  repositories: [{ ...repositoryList.repositories[0], type: "vault" }] }), null);
+check("reject credentialed library", Model.parseRepositoryList({ ...repositoryList,
+  repositories: [{ ...repositoryList.repositories[0], remote: "https://token@example.test/x" }] }), null);
 
-// ---- the category table the panel renders --------------------------------
-check("categories count", Model.CATEGORIES.length, 6);
-check("category keys", Model.CATEGORIES.map((c) => c.key),
-  ["packages", "config", "omarchy", "webapps", "plugins", "secrets"]);
+const catalog = { schemaVersion: 1, kind: "montage-loadout-catalog",
+  repositoryId: "personal-library", repositoryCommit: "a".repeat(40), path: "/tmp/personal",
+  items: [{ id: "work", name: "Work", author: "A", repositoryId: "personal-library",
+    digest: "b".repeat(64) }], invalid: [] };
+check("parse library items", Model.parseLoadoutCatalog(catalog), catalog);
+check("reject item identity mismatch", Model.parseLoadoutCatalog({ ...catalog,
+  items: [{ ...catalog.items[0], repositoryId: "other" }] }), null);
 
-if (failures > 0) {
+const sync = { schemaVersion: 1, kind: "montage-repository-sync", repositoryId: "personal-library",
+  repositoryType: "loadouts", status: "divergent", ahead: 1, behind: 1,
+  remote: "https://example.test/loadouts", fetch: { ok: true, errorCode: null } };
+check("parse sync decision", Model.parseSyncResult(sync), sync);
+check("reject sync vault kind", Model.parseSyncResult({ ...sync, repositoryType: "vault" }), null);
+
+const stored = { id: "work-a1", name: "Work", state: "healthy", resourceCount: 1,
+  attentionCount: 0, profile: {} };
+const live = { id: "work-a1", name: "Work", state: "drifted", attentionCount: 1,
+  resources: [{ id: "package:fd", currentState: "missing", healthState: "missing" }] };
+check("parse applied list", Model.parseLoadoutList({ schemaVersion: 1,
+  kind: "montage-applied-loadout-list", loadouts: [stored] }), [stored]);
+check("parse live health", Model.parseLoadoutCheck({ schemaVersion: 1,
+  kind: "montage-loadout-check", healthy: false, loadouts: [live] }), [live]);
+check("merge applied views", Model.mergeLoadoutViews([stored], [live]), [{ ...stored,
+  state: "drifted", attentionCount: 1, resources: live.resources }]);
+check("missing resource attention", Model.resourceHealth("missing"), "attention");
+
+const ress = { schemaVersion: 1, kind: "montage-ress-loadout-migration", format: "ress-v1",
+  compatible: true, ready: true, warnings: [], losses: [],
+  decisions: {ressPlugin:"not-applicable",montagePlugin:"omit"},
+  publication: { planned: false, published: false, commit: null } };
+check("parse Ress migration", Model.parseRessMigration(ress), ress);
+check("reject fictional Ress decision array", Model.parseRessMigration({...ress, decisions:[]}), null);
+check("reject unknown Ress decision", Model.parseRessMigration({...ress,
+  decisions:{ressPlugin:"accept-all",montagePlugin:"omit"}}), null);
+check("reject general port envelope", Model.parseRessMigration({ ...ress,
+  kind: "montage-port-report" }), null);
+
+const fingerprint = "c".repeat(64);
+const share = { schemaVersion: 1, kind: "montage-share-catalog", resources: [
+  { id: "package:fd", kind: "package", name: "fd", shareable: true,
+    reasonCode: "", reason: "", channels: ["native"], active: false },
+  { id: "theme-install:night", kind: "theme", name: "night", shareable: true,
+    reasonCode: "", reason: "", channels: [], active: true },
+  { id: "webapp:Unsafe", kind: "webapp", name: "Unsafe", shareable: false,
+    reasonCode: "unsupported-launcher", reason: "unsafe", channels: [], active: false }
+], currentItem: { state: "valid", name: "Mine", description: "", resourceIds: ["package:fd"],
+  unavailable: [{ id: "plugin:gone", name: "gone", reason: "missing", fingerprint }] },
+  presets: { state: "valid", loadouts: [] }, counts: { package: 1, theme: 1, webapp: 1 },
+  limits: { themes: 1 } };
+check("parse Share catalog", Model.parseShareCatalog(share), share);
+check("all selection excludes unsafe", Model.selectedShareIds(Model.shareSelection(share, "all")),
+  ["package:fd", "theme-install:night"]);
+check("unsafe toggle ignored", Model.selectedShareIds(Model.toggleShareResource(share, {}, "webapp:Unsafe")), []);
+check("bounded search", Model.filterShareResources(share, "package", "f", 1).length, 1);
+check("withdrawal acknowledgement required", Model.unacknowledgedShareResources(share, {}).length, 1);
+check("withdrawal acknowledgement accepted", Model.unacknowledgedShareResources(share,
+  { "plugin:gone": fingerprint }).length, 0);
+
+const composed = {...share, resources: [...share.resources,
+  {id:"theme-install:day",kind:"theme",name:"day",shareable:true,reasonCode:"",
+    channels:[],active:false}], presets:{state:"valid",loadouts:[
+    {id:"work",name:"Work",resourceIds:["package:fd","theme-install:day"],warnings:[]} ]}};
+check("parse preset catalog", Model.parseShareCatalog(composed), composed);
+check("preset initializes selection", Model.selectedShareIds(Model.shareSelection(composed,"preset","work")),
+  ["package:fd","theme-install:day"]);
+const union = Model.addSharePreset(composed,{"package:manual":true,"theme-install:night":true},"work");
+check("preset union retains manual choice", Model.selectedShareIds(union.selection),
+  ["package:fd","package:manual","theme-install:night"]);
+check("preset reports theme conflict", union.themeConflict,"theme-install:day");
+check("repeated union deduplicates", Model.selectedShareIds(Model.addSharePreset(composed,union.selection,"work").selection),
+  Model.selectedShareIds(union.selection));
+check("reject malformed preset warnings", Model.parseShareCatalog({...composed,
+  presets:{state:"valid",loadouts:[{...composed.presets.loadouts[0],warnings:[{}]}]}}), null);
+
+if (failures) {
   console.log(`${failures} Model.js assertions failed`);
   process.exit(1);
 }

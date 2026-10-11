@@ -18,13 +18,6 @@ assert_equals "$(stat -c %a "$REGISTRY")" "600" "registry permissions are privat
 assert_equals "$(jq -r '.schemaVersion' "$REGISTRY")" "1" "registry schema is versioned"
 FIRST_REV=$(jq -r '.revision' "$REGISTRY")
 (( FIRST_REV > 0 )) && _pass || _fail "registry revision advances monotonically"
-mkdir -p "$XDG_CONFIG_HOME/montage"
-printf '.local/state/mntg\n' >"$XDG_CONFIG_HOME/montage/include"
-mntg backup --yes --vault "$SANDBOX/registry-vault"
-assert_ok "backup succeeds with a broad state include"
-assert_no_file "$SANDBOX/registry-vault/home/.local/state/montage/loadouts.json" \
-  "machine-local registry is excluded from the vault"
-
 mntg loadout repair --yes "$(first_loadout_id)"
 assert_ok "a no-op mutation can read valid state"
 assert_equals "$(find "$(dirname "$REGISTRY")" -maxdepth 1 -name '.loadouts.*' | wc -l)" "0" \

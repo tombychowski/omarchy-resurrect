@@ -8,10 +8,10 @@ make_sync_fixture() {
   local name="$1" root remote
   root="$SANDBOX/$name"
   remote="$SANDBOX/$name.git"
-  mntg repository init loadouts "$root" --id "$name" >/dev/null
+  mntg repository init "$root" --id "$name" >/dev/null
   git clone -q --bare "$root" "$remote"
   git -C "$root" config "url.file://$remote.insteadOf" "https://sync.example/$name"
-  mntg repository configure "$name" "$root" loadouts \
+  mntg repository configure "$name" "$root" \
     --remote "https://sync.example/$name" >/dev/null
   ROOTS[$name]="$root"
   REMOTES[$name]="$remote"
@@ -165,29 +165,6 @@ assert_output "SYNC|1|local-ahead|1|0|true|failed|false|push-failed" \
   "porcelain carries the partial push failure"
 assert_output "DONE|fail|synchronization failed" "partial failure has a failure terminal record"
 assert_no_output "{" "failed porcelain synchronization remains prose-free"
-
-# The same versioned protocol applies to native vault repositories.
-vault_root=$(make_vault "$SANDBOX/sync-vault")
-seal_vault "$vault_root" sync-vault
-vault_id=$(jq -r '.id' "$vault_root/montage.json")
-vault_remote="$SANDBOX/sync-vault.git"
-git clone -q --bare "$vault_root" "$vault_remote"
-git -C "$vault_root" config "url.file://$vault_remote.insteadOf" \
-  "https://sync.example/sync-vault"
-mntg repository configure sync-vault "$vault_root" vault \
-  --remote "https://sync.example/sync-vault" >/dev/null
-mntg repository sync sync-vault --json
-assert_ok "vault repository synchronization uses the JSON protocol"
-assert_equals "$(jq -r '.repositoryType' <<<"$OUT")" "vault" \
-  "JSON identifies the vault repository kind"
-assert_equals "$(jq -r '.repositoryId' <<<"$OUT")" "$vault_id" \
-  "vault sync carries stable repository identity"
-mntg --porcelain repository sync sync-vault
-assert_ok "vault repository synchronization uses the porcelain protocol"
-assert_output "BEGIN|sync|$vault_id|vault" \
-  "porcelain identifies the native vault repository"
-assert_output "SYNC|1|equal|0|0|true|fetch|true|" \
-  "vault porcelain result uses the same versioned schema"
 
 # Credential refusal is tested at the classifier boundary because the registry
 # correctly refuses to persist such an entry in the first place.
